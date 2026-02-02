@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import express, { Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import Shift from '../models/Shift';
@@ -142,12 +143,12 @@ router.get('/', protect, requireApproval, async (req: AuthRequest, res: Response
 
     // Sanitize user data in response and handle employee hourly rate
     const sanitizedShifts = shifts.map(shift => {
-      const shiftObj = shift.toObject();
+      const shiftObj = shift.toObject() as unknown as Record<string, unknown>;
       if (shiftObj.cafe) {
-        shiftObj.cafe = sanitizeUser(shiftObj.cafe);
+        shiftObj.cafe = sanitizeUser(shiftObj.cafe as any);
       }
       if (Array.isArray(shiftObj.acceptedBy)) {
-        shiftObj.acceptedBy = shiftObj.acceptedBy.map((user: any) => sanitizeUser(user));
+        shiftObj.acceptedBy = (shiftObj.acceptedBy as any[]).map((user: any) => sanitizeUser(user));
       }
 
       // Show employeeHourlyRate to employees, baseHourlyRate to cafés
@@ -155,11 +156,11 @@ router.get('/', protect, requireApproval, async (req: AuthRequest, res: Response
         // Employees see employeeHourlyRate if set, otherwise baseHourlyRate
         shiftObj.hourlyRate = shiftObj.employeeHourlyRate ?? shiftObj.baseHourlyRate;
         // Don't expose baseHourlyRate to employees
-        delete shiftObj.baseHourlyRate;
+        delete (shiftObj as Record<string, unknown>).baseHourlyRate;
       } else if (req.user?.role === 'cafe') {
         // Cafés see baseHourlyRate, not employeeHourlyRate
         shiftObj.hourlyRate = shiftObj.baseHourlyRate;
-        delete shiftObj.employeeHourlyRate;
+        delete (shiftObj as Record<string, unknown>).employeeHourlyRate;
       }
 
       return shiftObj;
@@ -186,17 +187,17 @@ router.get('/:id', protect, requireApproval, async (req: AuthRequest, res: Respo
     }
 
     // Check if employee is blocked from this shift
-    if (req.user?.role === 'employee') {
+    if (req.user?.role === 'employee' && req.user) {
       // Check if employee is blocked
       if (shift.blockedEmployees && shift.blockedEmployees.some((id: any) =>
-        id.toString() === req.user._id.toString()
+        id.toString() === req.user!._id.toString()
       )) {
         return res.status(403).json({ message: 'You have been blocked from viewing this shift' });
       }
 
       // Employees can only see open shifts (unless they're already accepted to it)
       const isAccepted = shift.acceptedBy.some((id: any) =>
-        id.toString() === req.user._id.toString()
+        id.toString() === req.user!._id.toString()
       );
       if (shift.status !== 'open' && !isAccepted) {
         return res.status(403).json({ message: 'Shift is not available' });
@@ -204,23 +205,23 @@ router.get('/:id', protect, requireApproval, async (req: AuthRequest, res: Respo
     }
 
     // Sanitize user data and handle employee hourly rate
-    const shiftObj = shift.toObject();
+    const shiftObj = shift.toObject() as unknown as Record<string, unknown>;
     if (shiftObj.cafe) {
-      shiftObj.cafe = sanitizeUser(shiftObj.cafe);
+      shiftObj.cafe = sanitizeUser(shiftObj.cafe as any);
     }
     if (Array.isArray(shiftObj.acceptedBy)) {
-      shiftObj.acceptedBy = shiftObj.acceptedBy.map((user: any) => sanitizeUser(user));
+      shiftObj.acceptedBy = (shiftObj.acceptedBy as any[]).map((user: any) => sanitizeUser(user));
     }
 
     // Show employeeHourlyRate to employees, baseHourlyRate to cafés
     if (req.user?.role === 'employee') {
       // Employees see employeeHourlyRate if set, otherwise baseHourlyRate
       shiftObj.hourlyRate = shiftObj.employeeHourlyRate ?? shiftObj.baseHourlyRate;
-      delete shiftObj.baseHourlyRate;
+      delete (shiftObj as Record<string, unknown>).baseHourlyRate;
     } else if (req.user?.role === 'cafe') {
       // Cafés see baseHourlyRate, not employeeHourlyRate
       shiftObj.hourlyRate = shiftObj.baseHourlyRate;
-      delete shiftObj.employeeHourlyRate;
+      delete (shiftObj as Record<string, unknown>).employeeHourlyRate;
     }
 
     res.json(shiftObj);
@@ -344,8 +345,8 @@ router.post('/:id/cancel', protect, requireApproval, async (req: AuthRequest, re
     const isSameDayPost = hoursSinceCreation < 24;
 
     // Employee cancellation (same as reject, but with penalty logic)
-    if (req.user?.role === 'employee') {
-      if (!shift.acceptedBy.some((id: any) => id.toString() === req.user._id.toString())) {
+    if (req.user?.role === 'employee' && req.user) {
+      if (!shift.acceptedBy.some((id: any) => id.toString() === req.user!._id.toString())) {
         return res.status(400).json({ message: 'You have not accepted this shift' });
       }
 
@@ -362,7 +363,7 @@ router.post('/:id/cancel', protect, requireApproval, async (req: AuthRequest, re
 
       // Remove employee from accepted list
       const employeeIndex = shift.acceptedBy.findIndex(
-        (id: any) => id.toString() === req.user._id.toString()
+        (id: any) => id.toString() === req.user!._id.toString()
       );
       if (employeeIndex !== -1) {
         shift.acceptedBy.splice(employeeIndex, 1);
@@ -585,7 +586,7 @@ router.post('/:id/accept', protect, requireApproval, async (req: AuthRequest, re
     }
 
     // Check if employee already accepted this shift
-    if (shift.acceptedBy.some((id: any) => id.toString() === req.user._id.toString())) {
+    if (shift.acceptedBy.some((id: any) => id.toString() === req.user!._id.toString())) {
       return res.status(400).json({ message: 'You have already accepted this shift' });
     }
 
@@ -604,12 +605,12 @@ router.post('/:id/accept', protect, requireApproval, async (req: AuthRequest, re
       .populate('cafe', getSafeUserFields('cafe'))
       .populate('acceptedBy', getSafeUserFields('employee'));
 
-    const shiftObj = populated?.toObject();
+    const shiftObj = populated?.toObject() as unknown as Record<string, unknown>;
     if (shiftObj?.cafe) {
-      shiftObj.cafe = sanitizeUser(shiftObj.cafe);
+      shiftObj.cafe = sanitizeUser(shiftObj.cafe as any);
     }
     if (Array.isArray(shiftObj?.acceptedBy)) {
-      shiftObj.acceptedBy = shiftObj.acceptedBy.map((user: any) => sanitizeUser(user));
+      shiftObj.acceptedBy = (shiftObj.acceptedBy as any[]).map((user: any) => sanitizeUser(user));
     }
 
     res.json(shiftObj);
@@ -634,7 +635,7 @@ router.post('/:id/reject', protect, requireApproval, async (req: AuthRequest, re
 
     // Remove employee from acceptedBy if they were accepted
     const employeeIndex = shift.acceptedBy.findIndex(
-      (id: any) => id.toString() === req.user._id.toString()
+      (id: any) => id.toString() === req.user!._id.toString()
     );
 
     if (employeeIndex === -1) {
@@ -655,12 +656,12 @@ router.post('/:id/reject', protect, requireApproval, async (req: AuthRequest, re
       .populate('cafe', getSafeUserFields('cafe'))
       .populate('acceptedBy', getSafeUserFields('employee'));
 
-    const shiftObj = populated?.toObject();
+    const shiftObj = populated?.toObject() as unknown as Record<string, unknown>;
     if (shiftObj?.cafe) {
-      shiftObj.cafe = sanitizeUser(shiftObj.cafe);
+      shiftObj.cafe = sanitizeUser(shiftObj.cafe as any);
     }
     if (Array.isArray(shiftObj?.acceptedBy)) {
-      shiftObj.acceptedBy = shiftObj.acceptedBy.map((user: any) => sanitizeUser(user));
+      shiftObj.acceptedBy = (shiftObj.acceptedBy as any[]).map((user: any) => sanitizeUser(user));
     }
 
     res.json(shiftObj);
@@ -708,7 +709,7 @@ router.post('/:id/remove-employee/:employeeId', protect, requireApproval, async 
       }
       // Add to blocked list if not already blocked
       if (!shift.blockedEmployees.some((id: any) => id.toString() === employeeId)) {
-        shift.blockedEmployees.push(employeeId);
+        shift.blockedEmployees.push(new mongoose.Types.ObjectId(employeeId));
       }
     }
 
@@ -749,12 +750,12 @@ router.post('/:id/remove-employee/:employeeId', protect, requireApproval, async 
       .populate('acceptedBy', getSafeUserFields('employee'))
       .populate('blockedEmployees', 'firstName lastName email');
 
-    const shiftObj = populated?.toObject();
+    const shiftObj = populated?.toObject() as unknown as Record<string, unknown>;
     if (shiftObj?.cafe) {
-      shiftObj.cafe = sanitizeUser(shiftObj.cafe);
+      shiftObj.cafe = sanitizeUser(shiftObj.cafe as any);
     }
     if (Array.isArray(shiftObj?.acceptedBy)) {
-      shiftObj.acceptedBy = shiftObj.acceptedBy.map((user: any) => sanitizeUser(user));
+      shiftObj.acceptedBy = (shiftObj.acceptedBy as any[]).map((user: any) => sanitizeUser(user));
     }
 
     res.json({

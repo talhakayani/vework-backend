@@ -96,9 +96,9 @@ router.put('/users/:id/make-admin', async (req: AuthRequest, res: Response) => {
     await user.save();
 
     const updatedUser = await User.findById(user._id).select('-password');
-    res.json({ 
+    res.json({
       message: 'User has been made an admin successfully',
-      user: updatedUser 
+      user: updatedUser
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -120,20 +120,20 @@ router.get('/shifts', async (req: AuthRequest, res: Response) => {
     const shiftsWithRejections = await Promise.all(
       shifts.map(async (shift) => {
         const shiftObj = shift.toObject();
-        
+
         // If there are blocked employees, fetch their rejection reasons
         if (shift.blockedEmployees && shift.blockedEmployees.length > 0) {
           const blockedEmployeesWithReasons = await Promise.all(
             shift.blockedEmployees.map(async (employeeId: any) => {
               // Handle both populated (object) and non-populated (ObjectId) cases
-              const employeeIdValue = typeof employeeId === 'object' && employeeId._id 
-                ? employeeId._id 
+              const employeeIdValue = typeof employeeId === 'object' && employeeId._id
+                ? employeeId._id
                 : (typeof employeeId === 'object' ? employeeId : employeeId);
-              
+
               const employee = typeof employeeId === 'object' && employeeId.firstName
                 ? employeeId
                 : await User.findById(employeeIdValue).select('firstName lastName email');
-              
+
               // Find the application/rejection record for this employee and shift
               const application = await Application.findOne({
                 shift: shift._id,
@@ -151,10 +151,10 @@ router.get('/shifts', async (req: AuthRequest, res: Response) => {
               };
             })
           );
-          
-          shiftObj.blockedEmployees = blockedEmployeesWithReasons;
+
+          (shiftObj as unknown as Record<string, unknown>).blockedEmployees = blockedEmployeesWithReasons;
         }
-        
+
         return shiftObj;
       })
     );
@@ -182,7 +182,7 @@ router.put(
 
       const shift = await Shift.findById(req.params.id);
       if (!shift) return res.status(404).json({ message: 'Shift not found' });
-      
+
       // Handle pending_approval shifts (initial approval)
       if (shift.status === 'pending_approval') {
         // Allow admin to set employee-facing hourly rate
@@ -193,75 +193,75 @@ router.put(
           }
           shift.employeeHourlyRate = employeeRate;
         }
-      
-      shift.status = 'open';
-      await shift.save();
-      
-      // Populate shift for response
-      const populatedShift = await Shift.findById(shift._id)
-        .populate('cafe', 'shopName shopAddress')
-        .populate('acceptedBy', 'firstName lastName');
-      
-      return res.json(populatedShift);
-    }
-    
-    // Handle completed shifts (payment verification and invoice generation)
-    if (shift.status === 'completed') {
-      // Check if invoice already exists
-      const existingInvoice = await Invoice.findOne({ shift: shift._id });
-      if (existingInvoice) {
-        return res.status(400).json({ message: 'Invoice already exists for this shift' });
-      }
 
-      // Ensure acceptedBy is an array and check length
-      const acceptedByArray = Array.isArray(shift.acceptedBy) ? shift.acceptedBy : [];
-      const acceptedCount = acceptedByArray.length;
-
-      // Generate invoice with paid status (admin has verified payment)
-      if (acceptedCount > 0) {
-        const hours = getHoursFromShift(shift.startTime, shift.endTime);
-        const invoiceNumber = `INV-${Date.now()}-${shift._id.toString().slice(-6)}`;
-
-        const invoice = await Invoice.create({
-          cafe: shift.cafe,
-          shift: shift._id,
-          invoiceNumber,
-          shiftDetails: {
-            date: shift.date,
-            startTime: shift.startTime,
-            endTime: shift.endTime,
-            hours,
-            employees: acceptedCount,
-          },
-          baseAmount: shift.baseHourlyRate * hours * acceptedCount,
-          platformFee: shift.platformFee,
-          penaltyAmount: shift.penaltyAmount || 0,
-          totalAmount: shift.totalCost + (shift.penaltyAmount || 0),
-          status: 'paid',
-          paidAt: new Date(),
-        });
+        shift.status = 'open';
+        await shift.save();
 
         // Populate shift for response
         const populatedShift = await Shift.findById(shift._id)
           .populate('cafe', 'shopName shopAddress')
           .populate('acceptedBy', 'firstName lastName');
 
-        return res.json({ 
-          shift: populatedShift, 
-          invoice, 
-          message: 'Payment verified and invoice generated' 
-        });
-      } else {
-        return res.status(400).json({ message: 'Cannot generate invoice: shift has no accepted employees' });
+        return res.json(populatedShift);
       }
+
+      // Handle completed shifts (payment verification and invoice generation)
+      if (shift.status === 'completed') {
+        // Check if invoice already exists
+        const existingInvoice = await Invoice.findOne({ shift: shift._id });
+        if (existingInvoice) {
+          return res.status(400).json({ message: 'Invoice already exists for this shift' });
+        }
+
+        // Ensure acceptedBy is an array and check length
+        const acceptedByArray = Array.isArray(shift.acceptedBy) ? shift.acceptedBy : [];
+        const acceptedCount = acceptedByArray.length;
+
+        // Generate invoice with paid status (admin has verified payment)
+        if (acceptedCount > 0) {
+          const hours = getHoursFromShift(shift.startTime, shift.endTime);
+          const invoiceNumber = `INV-${Date.now()}-${shift._id.toString().slice(-6)}`;
+
+          const invoice = await Invoice.create({
+            cafe: shift.cafe,
+            shift: shift._id,
+            invoiceNumber,
+            shiftDetails: {
+              date: shift.date,
+              startTime: shift.startTime,
+              endTime: shift.endTime,
+              hours,
+              employees: acceptedCount,
+            },
+            baseAmount: shift.baseHourlyRate * hours * acceptedCount,
+            platformFee: shift.platformFee,
+            penaltyAmount: shift.penaltyAmount || 0,
+            totalAmount: shift.totalCost + (shift.penaltyAmount || 0),
+            status: 'paid',
+            paidAt: new Date(),
+          });
+
+          // Populate shift for response
+          const populatedShift = await Shift.findById(shift._id)
+            .populate('cafe', 'shopName shopAddress')
+            .populate('acceptedBy', 'firstName lastName');
+
+          return res.json({
+            shift: populatedShift,
+            invoice,
+            message: 'Payment verified and invoice generated'
+          });
+        } else {
+          return res.status(400).json({ message: 'Cannot generate invoice: shift has no accepted employees' });
+        }
+      }
+
+      return res.status(400).json({ message: 'Only pending-approval or completed shifts can be approved' });
+    } catch (error: any) {
+      console.error('Error approving shift:', error);
+      res.status(500).json({ message: error.message || 'Failed to approve shift' });
     }
-    
-    return res.status(400).json({ message: 'Only pending-approval or completed shifts can be approved' });
-  } catch (error: any) {
-    console.error('Error approving shift:', error);
-    res.status(500).json({ message: error.message || 'Failed to approve shift' });
-  }
-});
+  });
 
 // @route   PUT /api/admin/config
 // @desc    Update platform configuration
@@ -359,7 +359,7 @@ router.put(
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-      
+
       const updateData: any = {};
       if (req.body.employeePriceDeductionPercentage !== undefined) {
         updateData.employeePriceDeductionPercentage = req.body.employeePriceDeductionPercentage;
@@ -370,7 +370,7 @@ router.put(
         { $set: updateData },
         { new: true, upsert: true }
       );
-      
+
       res.json({
         employeePriceDeductionPercentage: config.employeePriceDeductionPercentage ?? 25,
       });

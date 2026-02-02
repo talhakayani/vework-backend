@@ -40,7 +40,7 @@ router.post(
       }
 
       // Check if employee is blocked from this shift
-      if (shift.blockedEmployees && shift.blockedEmployees.some((id: any) => id.toString() === req.user._id.toString())) {
+      if (shift.blockedEmployees && req.user && shift.blockedEmployees.some((id: any) => id.toString() === req.user!._id.toString())) {
         return res.status(403).json({ message: 'You have been blocked from applying to this shift' });
       }
 
@@ -64,16 +64,17 @@ router.post(
       });
 
       const populated = await Application.findById(application._id)
-        .populate('shift')
+        .populate({ path: 'shift', populate: { path: 'cafe', select: getSafeUserFields('cafe') } })
         .populate('employee', getSafeUserFields('employee'));
 
       // Sanitize user data
-      const appObj = populated?.toObject();
+      const appObj = populated?.toObject() as unknown as Record<string, unknown>;
       if (appObj?.employee) {
-        appObj.employee = sanitizeUser(appObj.employee);
+        appObj.employee = sanitizeUser(appObj.employee as any);
       }
-      if (appObj?.shift?.cafe) {
-        appObj.shift.cafe = sanitizeUser(appObj.shift.cafe);
+      const shiftData = appObj?.shift as Record<string, unknown> | undefined;
+      if (shiftData?.cafe) {
+        (shiftData as Record<string, unknown>).cafe = sanitizeUser(shiftData.cafe as any);
       }
 
       res.status(201).json(appObj);
@@ -141,10 +142,10 @@ router.get('/shift/:shiftId', protect, requireApproval, async (req: AuthRequest,
           .sort({ createdAt: -1 })
           .limit(5);
 
-        const appObj = app.toObject();
+        const appObj = app.toObject() as unknown as Record<string, unknown>;
         // Sanitize employee data - remove email, DOB, but keep CV path for review
         if (appObj.employee) {
-          const employee = appObj.employee as any;
+          const employee = appObj.employee as Record<string, unknown>;
           appObj.employee = {
             _id: employee._id,
             firstName: employee.firstName,
@@ -209,10 +210,10 @@ router.put('/:id/accept', protect, requireApproval, async (req: AuthRequest, res
     await application.save();
 
     // Add employee to shift's acceptedBy array
-    const employeeId = typeof application.employee === 'object' 
-        ? (application.employee as any)._id 
-        : application.employee;
-    
+    const employeeId = typeof application.employee === 'object'
+      ? (application.employee as any)._id
+      : application.employee;
+
     if (!shift.acceptedBy.some((id: any) => id.toString() === employeeId.toString())) {
       shift.acceptedBy.push(employeeId);
     }
@@ -241,20 +242,21 @@ router.put('/:id/accept', protect, requireApproval, async (req: AuthRequest, res
       // Update shift status
       shift.status = 'accepted';
     }
-    
+
     await shift.save();
 
     const populated = await Application.findById(application._id)
-      .populate('shift')
+      .populate({ path: 'shift', populate: { path: 'cafe', select: getSafeUserFields('cafe') } })
       .populate('employee', getSafeUserFields('employee'));
 
     // Sanitize user data
-    const appObj = populated?.toObject();
+    const appObj = populated?.toObject() as unknown as Record<string, unknown>;
     if (appObj?.employee) {
-      appObj.employee = sanitizeUser(appObj.employee);
+      appObj.employee = sanitizeUser(appObj.employee as any);
     }
-    if (appObj?.shift?.cafe) {
-      appObj.shift.cafe = sanitizeUser(appObj.shift.cafe);
+    const shiftData = appObj?.shift as Record<string, unknown> | undefined;
+    if (shiftData?.cafe) {
+      (shiftData as Record<string, unknown>).cafe = sanitizeUser(shiftData.cafe as any);
     }
 
     res.json(appObj);
@@ -298,16 +300,17 @@ router.put(
       await application.save();
 
       const populated = await Application.findById(application._id)
-        .populate('shift')
+        .populate({ path: 'shift', populate: { path: 'cafe', select: getSafeUserFields('cafe') } })
         .populate('employee', getSafeUserFields('employee'));
 
       // Sanitize user data
-      const appObj = populated?.toObject();
+      const appObj = populated?.toObject() as unknown as Record<string, unknown>;
       if (appObj?.employee) {
-        appObj.employee = sanitizeUser(appObj.employee);
+        appObj.employee = sanitizeUser(appObj.employee as any);
       }
-      if (appObj?.shift?.cafe) {
-        appObj.shift.cafe = sanitizeUser(appObj.shift.cafe);
+      const shiftData = appObj?.shift as Record<string, unknown> | undefined;
+      if (shiftData?.cafe) {
+        (shiftData as Record<string, unknown>).cafe = sanitizeUser(shiftData.cafe as any);
       }
 
       res.json(appObj);

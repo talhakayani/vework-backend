@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import express, { Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import Shift from '../models/Shift';
@@ -31,12 +32,12 @@ router.get('/schedule', protect, requireApproval, async (req: AuthRequest, res: 
 
     // Sanitize cafe data
     const sanitizedShifts = shifts.map(shift => {
-      const shiftObj = shift.toObject();
+      const shiftObj = shift.toObject() as unknown as Record<string, unknown>;
       if (shiftObj.cafe) {
-        shiftObj.cafe = sanitizeUser(shiftObj.cafe);
+        shiftObj.cafe = sanitizeUser(shiftObj.cafe as any);
       }
       if (Array.isArray(shiftObj.acceptedBy)) {
-        shiftObj.acceptedBy = shiftObj.acceptedBy.map((user: any) => sanitizeUser(user));
+        shiftObj.acceptedBy = (shiftObj.acceptedBy as any[]).map((user: any) => sanitizeUser(user));
       }
       return shiftObj;
     });
@@ -70,10 +71,10 @@ router.get('/history', protect, requireApproval, async (req: AuthRequest, res: R
       // Use employeeHourlyRate if set, otherwise baseHourlyRate
       const hourlyRate = shift.employeeHourlyRate ?? shift.baseHourlyRate;
       const earnings = hours * hourlyRate;
-      const shiftObj = shift.toObject();
+      const shiftObj = shift.toObject() as unknown as Record<string, unknown>;
       // Sanitize cafe data
       if (shiftObj.cafe) {
-        shiftObj.cafe = sanitizeUser(shiftObj.cafe);
+        shiftObj.cafe = sanitizeUser(shiftObj.cafe as any);
       }
       return {
         ...shiftObj,
@@ -282,7 +283,7 @@ router.post(
         shift.blockedEmployees = [];
       }
       if (!shift.blockedEmployees.some((id: any) => id.toString() === employeeId)) {
-        shift.blockedEmployees.push(employeeId);
+        shift.blockedEmployees.push(new mongoose.Types.ObjectId(employeeId));
       }
 
       // Update shift status - reopen if needed

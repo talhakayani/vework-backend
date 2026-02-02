@@ -32,9 +32,9 @@ router.get('/', protect, requireApproval, async (req: AuthRequest, res: Response
 
     // Sanitize cafe data
     const sanitizedInvoices = invoices.map(invoice => {
-      const invoiceObj = invoice.toObject();
+      const invoiceObj = invoice.toObject() as unknown as Record<string, unknown>;
       if (invoiceObj.cafe) {
-        invoiceObj.cafe = sanitizeUser(invoiceObj.cafe);
+        invoiceObj.cafe = sanitizeUser(invoiceObj.cafe as any);
       }
       return invoiceObj;
     });
@@ -52,7 +52,7 @@ router.get('/:id/pdf', protect, requireApproval, async (req: AuthRequest, res: R
   try {
     // First, get invoice without population to check authorization
     const invoiceCheck = await Invoice.findById(req.params.id);
-    
+
     if (!invoiceCheck) {
       return res.status(404).json({ message: 'Invoice not found' });
     }
@@ -72,6 +72,10 @@ router.get('/:id/pdf', protect, requireApproval, async (req: AuthRequest, res: R
     const invoice = await Invoice.findById(req.params.id)
       .populate('cafe', getSafeUserFields('cafe'))
       .populate('shift');
+
+    if (!invoice) {
+      return res.status(404).json({ message: 'Invoice not found' });
+    }
 
     // Generate PDF
     const pdfBuffer = await generateInvoicePDF(invoice.toObject());
@@ -149,7 +153,7 @@ router.get('/:id', protect, requireApproval, async (req: AuthRequest, res: Respo
   try {
     // First, get invoice without population to check authorization
     const invoiceCheck = await Invoice.findById(req.params.id);
-    
+
     if (!invoiceCheck) {
       return res.status(404).json({ message: 'Invoice not found' });
     }
@@ -176,10 +180,14 @@ router.get('/:id', protect, requireApproval, async (req: AuthRequest, res: Respo
         },
       });
 
+    if (!invoice) {
+      return res.status(404).json({ message: 'Invoice not found' });
+    }
+
     // Sanitize cafe data
-    const invoiceObj = invoice.toObject();
+    const invoiceObj = invoice.toObject() as unknown as Record<string, unknown>;
     if (invoiceObj.cafe) {
-      invoiceObj.cafe = sanitizeUser(invoiceObj.cafe);
+      invoiceObj.cafe = sanitizeUser(invoiceObj.cafe as any);
     }
 
     res.json(invoiceObj);
