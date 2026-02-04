@@ -4,8 +4,9 @@ import { body, validationResult } from 'express-validator';
 import Shift from '../models/Shift';
 import Application from '../models/Application';
 import Invoice from '../models/Invoice';
+import PlatformConfig from '../models/PlatformConfig';
 import { protect, requireApproval, AuthRequest } from '../middleware/auth';
-import { calculateShiftCost, calculatePenalty, getHoursFromShift } from '../utils/calculateShiftCost';
+import { calculateShiftCost, calculateShiftCostWithFixedFee, calculatePenalty, getHoursFromShift } from '../utils/calculateShiftCost';
 import { differenceInHours } from 'date-fns';
 import { getSafeUserFields, sanitizeUser } from '../utils/sanitizeUser';
 import { uploadPaymentProof } from '../utils/uploadPaymentProof';
@@ -66,14 +67,20 @@ router.post(
         return res.status(400).json({ message: 'Hourly rate must be at least £14' });
       }
 
-      const platformFeePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || '10');
+      // Platform fee: first N shifts per cafe free, then £X per shift (employer pays, employee pays nothing)
+      const config = await PlatformConfig.findOne({ key: 'platform' }).lean();
+      const platformFeePerShift = config?.platformFeePerShift ?? 10;
+      const freeShiftsPerCafe = config?.freeShiftsPerCafe ?? 2;
 
-      const { baseAmount, platformFee, totalCost } = calculateShiftCost(
+      const cafeShiftCount = await Shift.countDocuments({ cafe: req.user._id });
+      const platformFee = cafeShiftCount < freeShiftsPerCafe ? 0 : platformFeePerShift;
+
+      const { baseAmount, totalCost } = calculateShiftCostWithFixedFee(
         startTime,
         endTime,
         baseHourlyRate,
-        platformFeePercentage,
-        requiredEmployees
+        requiredEmployees,
+        platformFee
       );
 
       // Parse location if it's a JSON string
@@ -128,6 +135,12 @@ router.get('/', protect, requireApproval, async (req: AuthRequest, res: Response
     } else if (req.user?.role === 'cafe') {
       // Cafés see only their own shifts
       query = { cafe: req.user._id };
+      // Filter: active (default) or completed
+      if (req.query.completed === 'true') {
+        query.status = 'completed';
+      } else if (req.query.active === 'true' || !req.query.completed) {
+        query.status = { $in: ['pending_approval', 'open', 'accepted', 'paused'] };
+      }
     }
 
     // Date filter
@@ -279,13 +292,9 @@ router.put(
         return res.status(400).json({ message: 'Cannot edit completed or cancelled shift' });
       }
 
-      if (shift.status === 'accepted' || shift.acceptedBy.length > 0) {
-        return res.status(400).json({ message: 'Cannot edit shift with assigned employees' });
-      }
+      // Employer CAN edit shift even after employees accepted (e.g. change time, hourly rate)
+      const updates: any = { ...req.body };
 
-      const updates = req.body;
-
-      // Determine hourly rate (use provided or existing or default)
       const hourlyRate = updates.hourlyRate
         ? parseFloat(updates.hourlyRate)
         : (shift.baseHourlyRate || parseFloat(process.env.BASE_HOURLY_RATE || '14'));
@@ -294,26 +303,36 @@ router.put(
         return res.status(400).json({ message: 'Hourly rate must be at least £14' });
       }
 
-      if (updates.startTime || updates.endTime || updates.requiredEmployees || updates.hourlyRate) {
-        const startTime = updates.startTime || shift.startTime;
-        const endTime = updates.endTime || shift.endTime;
-        const requiredEmployees = updates.requiredEmployees || shift.requiredEmployees;
-        const platformFeePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || '10');
+      const startTime = updates.startTime || shift.startTime;
+      const endTime = updates.endTime || shift.endTime;
+      const requiredEmployees = updates.requiredEmployees ?? shift.requiredEmployees;
 
-        const { baseAmount, platformFee, totalCost } = calculateShiftCost(
-          startTime,
-          endTime,
-          hourlyRate,
-          platformFeePercentage,
-          requiredEmployees
-        );
-
-        updates.baseHourlyRate = hourlyRate;
-        updates.platformFee = platformFee;
-        updates.totalCost = totalCost;
+      if (requiredEmployees < (shift.acceptedBy?.length || 0)) {
+        return res.status(400).json({ message: 'Cannot reduce required employees below current accepted count' });
       }
 
-      const updatedShift = await Shift.findByIdAndUpdate(req.params.id, updates, { new: true });
+      // Recalculate base amount and total cost (keep existing platform fee - it was set at creation)
+      const platformFee = shift.platformFee ?? 0;
+      const { baseAmount, totalCost } = calculateShiftCostWithFixedFee(
+        startTime,
+        endTime,
+        hourlyRate,
+        requiredEmployees,
+        platformFee
+      );
+
+      updates.baseHourlyRate = hourlyRate;
+      updates.totalCost = totalCost;
+      updates.startTime = startTime;
+      updates.endTime = endTime;
+      updates.requiredEmployees = requiredEmployees;
+      if (updates.location) {
+        const loc = typeof updates.location === 'string' ? JSON.parse(updates.location) : updates.location;
+        updates.location = loc;
+      }
+      delete updates.hourlyRate;
+
+      const updatedShift = await Shift.findByIdAndUpdate(req.params.id, { $set: updates }, { new: true });
       res.json(updatedShift);
     } catch (error: any) {
       res.status(500).json({ message: error.message });

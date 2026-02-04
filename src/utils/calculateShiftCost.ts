@@ -7,24 +7,41 @@ export const calculateShiftCost = (
   platformFeePercentage: number,
   requiredEmployees: number
 ): { baseAmount: number; platformFee: number; totalCost: number } => {
-  // Parse time strings (format: "HH:mm")
   const [startHour, startMin] = startTime.split(':').map(Number);
   const [endHour, endMin] = endTime.split(':').map(Number);
-
-  // Calculate hours
   const startMinutes = startHour * 60 + startMin;
   const endMinutes = endHour * 60 + endMin;
   const totalMinutes = endMinutes - startMinutes;
   const hours = totalMinutes / 60;
-
-  // Calculate costs
   const baseAmount = hours * baseHourlyRate * requiredEmployees;
   const platformFee = (baseAmount * platformFeePercentage) / 100;
   const totalCost = baseAmount + platformFee;
-
   return {
     baseAmount: Math.round(baseAmount * 100) / 100,
     platformFee: Math.round(platformFee * 100) / 100,
+    totalCost: Math.round(totalCost * 100) / 100,
+  };
+};
+
+/** Employer pays fixed platform fee per shift (e.g. £10). Employee pays nothing. */
+export const calculateShiftCostWithFixedFee = (
+  startTime: string,
+  endTime: string,
+  baseHourlyRate: number,
+  requiredEmployees: number,
+  platformFee: number
+): { baseAmount: number; platformFee: number; totalCost: number } => {
+  const [startHour, startMin] = startTime.split(':').map(Number);
+  const [endHour, endMin] = endTime.split(':').map(Number);
+  const startMinutes = startHour * 60 + startMin;
+  const endMinutes = endHour * 60 + endMin;
+  const totalMinutes = endMinutes - startMinutes;
+  const hours = totalMinutes / 60;
+  const baseAmount = hours * baseHourlyRate * requiredEmployees;
+  const totalCost = baseAmount + platformFee;
+  return {
+    baseAmount: Math.round(baseAmount * 100) / 100,
+    platformFee,
     totalCost: Math.round(totalCost * 100) / 100,
   };
 };

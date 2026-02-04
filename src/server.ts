@@ -50,6 +50,12 @@ async function start() {
   await seedPlatformConfig();
   const { initDefaultAdmin } = await import('./scripts/initDefaultAdmin');
   await initDefaultAdmin();
+
+  // Auto-complete shifts when end time passes (runs every minute)
+  const { runAutoCompleteShifts } = await import('./jobs/autoCompleteShifts');
+  setInterval(runAutoCompleteShifts, 60 * 1000);
+  runAutoCompleteShifts().catch((err) => console.error('Initial auto-complete error:', err));
+
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });

@@ -77,6 +77,62 @@ router.get('/users', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// @route   GET /api/admin/users/:id
+// @desc    Get full user details (cafe location, CV, share code, etc.) - Admin only
+// @access  Private (Admin)
+router.get('/users/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const user = await User.findById(req.params.id).select('-password').lean();
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json(user);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @route   PUT /api/admin/users/:id/block
+// @desc    Block or unblock an employee account (Admin only)
+// @access  Private (Admin)
+router.put(
+  '/users/:id/block',
+  [
+    body('isBlocked').isBoolean().withMessage('isBlocked must be true or false'),
+    body('blockedUntil').optional().isISO8601().withMessage('blockedUntil must be a valid date'),
+  ],
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const user = await User.findById(req.params.id);
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      if (user.role !== 'employee') {
+        return res.status(400).json({ message: 'Only employee accounts can be blocked' });
+      }
+
+      const { isBlocked, blockedUntil } = req.body;
+      user.isBlocked = isBlocked;
+      user.blockedUntil = isBlocked && blockedUntil ? new Date(blockedUntil) : undefined;
+      await user.save();
+
+      const updatedUser = await User.findById(user._id).select('-password');
+      res.json({
+        message: isBlocked ? 'Employee account blocked' : 'Employee account unblocked',
+        user: updatedUser,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+);
+
 // @route   PUT /api/admin/users/:id/make-admin
 // @desc    Make a user an admin
 // @access  Private (Admin)
@@ -164,6 +220,54 @@ router.get('/shifts', async (req: AuthRequest, res: Response) => {
     res.status(500).json({ message: error.message });
   }
 });
+
+// @route   PUT /api/admin/shifts/:id
+// @desc    Update shift (Admin can edit any shift including after approval - hourly rate, etc.)
+// @access  Private (Admin)
+router.put(
+  '/shifts/:id',
+  [
+    body('employeeHourlyRate').optional().isFloat({ min: 0 }),
+    body('baseHourlyRate').optional().isFloat({ min: 14 }),
+    body('startTime').optional().matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
+    body('endTime').optional().matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
+    body('date').optional().isISO8601(),
+    body('requiredEmployees').optional().isInt({ min: 1 }),
+    body('description').optional().trim().notEmpty(),
+  ],
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const shift = await Shift.findById(req.params.id);
+      if (!shift) return res.status(404).json({ message: 'Shift not found' });
+
+      if (shift.status === 'completed' || shift.status === 'cancelled') {
+        return res.status(400).json({ message: 'Cannot edit completed or cancelled shift' });
+      }
+
+      const updates: any = {};
+      if (req.body.employeeHourlyRate !== undefined) updates.employeeHourlyRate = parseFloat(req.body.employeeHourlyRate);
+      if (req.body.baseHourlyRate !== undefined) updates.baseHourlyRate = parseFloat(req.body.baseHourlyRate);
+      if (req.body.startTime !== undefined) updates.startTime = req.body.startTime;
+      if (req.body.endTime !== undefined) updates.endTime = req.body.endTime;
+      if (req.body.date !== undefined) updates.date = req.body.date;
+      if (req.body.requiredEmployees !== undefined) updates.requiredEmployees = req.body.requiredEmployees;
+      if (req.body.description !== undefined) updates.description = req.body.description;
+
+      const updatedShift = await Shift.findByIdAndUpdate(req.params.id, { $set: updates }, { new: true })
+        .populate('cafe', 'shopName shopAddress')
+        .populate('acceptedBy', 'firstName lastName email');
+
+      res.json(updatedShift);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+);
 
 // @route   PUT /api/admin/shifts/:id/approve
 // @desc    Approve shift (pending_approval -> open, or completed -> generate invoice after payment verification)
@@ -348,12 +452,14 @@ router.put(
 );
 
 // @route   PUT /api/admin/platform-config
-// @desc    Update platform configuration (bank details and employee price deduction)
+// @desc    Update platform configuration (bank details, platform fee, etc.)
 // @access  Private (Admin)
 router.put(
   '/platform-config',
   [
-    body('employeePriceDeductionPercentage').optional().isFloat({ min: 0, max: 100 }).withMessage('Deduction percentage must be between 0 and 100'),
+    body('employeePriceDeductionPercentage').optional().isFloat({ min: 0, max: 100 }),
+    body('platformFeePerShift').optional().isFloat({ min: 0 }),
+    body('freeShiftsPerCafe').optional().isInt({ min: 0 }),
   ],
   async (req: AuthRequest, res: Response) => {
     try {
@@ -364,6 +470,12 @@ router.put(
       if (req.body.employeePriceDeductionPercentage !== undefined) {
         updateData.employeePriceDeductionPercentage = req.body.employeePriceDeductionPercentage;
       }
+      if (req.body.platformFeePerShift !== undefined) {
+        updateData.platformFeePerShift = parseFloat(req.body.platformFeePerShift);
+      }
+      if (req.body.freeShiftsPerCafe !== undefined) {
+        updateData.freeShiftsPerCafe = parseInt(req.body.freeShiftsPerCafe, 10);
+      }
 
       const config = await PlatformConfig.findOneAndUpdate(
         { key: 'platform' },
@@ -372,12 +484,30 @@ router.put(
       );
 
       res.json({
-        employeePriceDeductionPercentage: config.employeePriceDeductionPercentage ?? 25,
+        employeePriceDeductionPercentage: config.employeePriceDeductionPercentage ?? 0,
+        platformFeePerShift: config.platformFeePerShift ?? 10,
+        freeShiftsPerCafe: config.freeShiftsPerCafe ?? 2,
       });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   }
 );
+
+// @route   GET /api/admin/platform-config
+// @desc    Get platform configuration (Admin)
+// @access  Private (Admin)
+router.get('/platform-config', async (req: AuthRequest, res: Response) => {
+  try {
+    const config = await PlatformConfig.findOne({ key: 'platform' }).lean();
+    res.json({
+      employeePriceDeductionPercentage: config?.employeePriceDeductionPercentage ?? 0,
+      platformFeePerShift: config?.platformFeePerShift ?? 10,
+      freeShiftsPerCafe: config?.freeShiftsPerCafe ?? 2,
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+});
 
 export default router;

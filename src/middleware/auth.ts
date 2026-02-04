@@ -61,5 +61,16 @@ export const requireApproval = (req: AuthRequest, res: Response, next: NextFunct
     return;
   }
 
+  // Check if employee is temporarily blocked by admin
+  if (req.user.role === 'employee' && (req.user as any).isBlocked) {
+    const blockedUntil = (req.user as any).blockedUntil;
+    const now = new Date();
+    const isBlockExpired = blockedUntil && new Date(blockedUntil) <= now;
+    if (!isBlockExpired) {
+      res.status(403).json({ message: 'Your account is temporarily blocked. Please contact support.' });
+      return;
+    }
+  }
+
   next();
 };

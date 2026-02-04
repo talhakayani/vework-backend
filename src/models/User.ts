@@ -37,6 +37,11 @@ export interface IUser extends Document {
     firstName: string;
     lastName: string;
     approvalStatus: 'pending' | 'approved' | 'rejected';
+    emailVerified?: boolean;
+    emailVerificationToken?: string;
+    emailVerificationExpires?: Date;
+    isBlocked?: boolean; // Admin can temporarily block employee accounts
+    blockedUntil?: Date; // Optional: block until this date (null = indefinite until unblocked)
     // Employee specific fields
     dateOfBirth?: Date;
     cvPath?: string;
@@ -91,6 +96,11 @@ const UserSchema = new Schema<IUser>(
             enum: ['pending', 'approved', 'rejected'],
             default: 'pending',
         },
+        emailVerified: { type: Boolean, default: false },
+        emailVerificationToken: String,
+        emailVerificationExpires: Date,
+        isBlocked: { type: Boolean, default: false },
+        blockedUntil: Date,
         // Employee fields
         dateOfBirth: Date,
         cvPath: String,

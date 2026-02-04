@@ -20,11 +20,13 @@ router.get('/schedule', protect, requireApproval, async (req: AuthRequest, res: 
       return res.status(403).json({ message: 'Only employees can access this' });
     }
 
-    // Get shifts where employee is in acceptedBy array
+    // Get shifts where employee is in acceptedBy array (include same-day shifts)
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
     const shifts = await Shift.find({
       acceptedBy: req.user._id,
       status: { $in: ['accepted', 'open'] },
-      date: { $gte: new Date() },
+      date: { $gte: startOfToday },
     })
       .populate('cafe', getSafeUserFields('cafe'))
       .populate('acceptedBy', getSafeUserFields('employee'))
@@ -239,6 +241,10 @@ router.post(
 
       if (shift.cafe.toString() !== req.user._id.toString()) {
         return res.status(403).json({ message: 'Not authorized' });
+      }
+
+      if (shift.status === 'completed') {
+        return res.status(400).json({ message: 'Cannot reject employee from completed shift' });
       }
 
       // Check if employee is assigned

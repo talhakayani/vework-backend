@@ -5,6 +5,7 @@ import { generateToken } from '../utils/generateToken';
 import { protect, AuthRequest } from '../middleware/auth';
 import { upload } from '../utils/upload';
 import { maskPaymentDetails } from '../utils/maskPaymentDetails';
+import { generateVerificationToken, sendVerificationEmail } from '../utils/sendVerificationEmail';
 
 const router = express.Router();
 
@@ -36,9 +37,8 @@ router.post(
         return res.status(400).json({ message: 'User already exists' });
       }
 
-      // Save only relative path from backend root (e.g., "uploads/cv-xxx.pdf")
-      // Multer gives us the filename, so we can construct the relative path
       const cvPath = req.file ? `uploads/${req.file.filename}` : undefined;
+      const verificationToken = generateVerificationToken();
 
       const user = await User.create({
         email,
@@ -50,7 +50,14 @@ router.post(
         role: 'employee',
         approvalStatus: 'pending',
         cvPath,
+        emailVerified: false,
+        emailVerificationToken: verificationToken,
+        emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
       });
+
+      sendVerificationEmail(email, verificationToken, firstName).catch((err) =>
+        console.error('Failed to send verification email:', err)
+      );
 
       res.status(201).json({
         _id: user._id,
@@ -94,6 +101,8 @@ router.post(
         return res.status(400).json({ message: 'User already exists' });
       }
 
+      const verificationToken = generateVerificationToken();
+
       const user = await User.create({
         email,
         password,
@@ -103,7 +112,14 @@ router.post(
         shopAddress,
         role: 'cafe',
         approvalStatus: 'pending',
+        emailVerified: false,
+        emailVerificationToken: verificationToken,
+        emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
       });
+
+      sendVerificationEmail(email, verificationToken, firstName).catch((err) =>
+        console.error('Failed to send verification email:', err)
+      );
 
       res.status(201).json({
         _id: user._id,
@@ -141,6 +157,17 @@ router.post(
         return res.status(401).json({ message: 'Invalid credentials' });
       }
 
+      const emailVerified = (user as any).emailVerified !== false; // Existing users without field = verified
+      if (
+        (user.role === 'employee' || user.role === 'cafe') &&
+        process.env.VERIFY_EMAIL_REQUIRED === 'true' &&
+        !emailVerified
+      ) {
+        return res.status(403).json({
+          message: 'Please verify your email before logging in. Check your inbox for the verification link.',
+        });
+      }
+
       res.json({
         _id: user._id,
         email: user.email,
@@ -155,6 +182,39 @@ router.post(
     }
   }
 );
+
+// @route   GET /api/auth/verify-email
+// @desc    Verify email with token
+// @access  Public
+router.get('/verify-email', async (req: Request, res: Response) => {
+  try {
+    const { token } = req.query;
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ message: 'Invalid verification token' });
+    }
+
+    const user = await User.findOne({
+      emailVerificationToken: token,
+      emailVerificationExpires: { $gt: new Date() },
+    });
+
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid or expired verification link' });
+    }
+
+    (user as any).emailVerified = true;
+    (user as any).emailVerificationToken = undefined;
+    (user as any).emailVerificationExpires = undefined;
+    await user.save();
+
+    res.json({
+      message: 'Email verified successfully. You can now log in.',
+      token: generateToken(user._id.toString()),
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+});
 
 // @route   GET /api/auth/me
 // @desc    Get current user

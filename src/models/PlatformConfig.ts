@@ -16,7 +16,9 @@ export interface IPlatformBankDetails {
 export interface IPlatformConfig extends Document {
   key: string;
   bankDetails?: IPlatformBankDetails;
-  employeePriceDeductionPercentage?: number; // Percentage to deduct from cafe's hourly rate for employees
+  employeePriceDeductionPercentage?: number; // Deprecated - employees pay no platform fee
+  platformFeePerShift?: number; // £ per shift (employer pays, default 10)
+  freeShiftsPerCafe?: number; // First N shifts per cafe are free (default 2)
   updatedAt: Date;
 }
 
@@ -38,10 +40,12 @@ const PlatformConfigSchema = new Schema<IPlatformConfig>(
     },
     employeePriceDeductionPercentage: {
       type: Number,
-      default: 25, // Default 25% deduction (e.g., £16 becomes £12)
+      default: 0, // Employees pay NO platform fee
       min: 0,
       max: 100,
     },
+    platformFeePerShift: { type: Number, default: 10, min: 0 },
+    freeShiftsPerCafe: { type: Number, default: 2, min: 0 },
   },
   { timestamps: true }
 );

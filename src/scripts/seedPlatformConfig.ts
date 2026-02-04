@@ -7,21 +7,23 @@ import PlatformConfig from '../models/PlatformConfig';
  */
 export async function seedPlatformConfig(): Promise<void> {
   const existing = await PlatformConfig.findOne({ key: 'platform' });
-  if (existing?.bankDetails?.accountName) return;
+  const updates: Record<string, unknown> = {};
+
+  if (!existing?.bankDetails?.accountName) {
+    updates.bankDetails = {
+      type: 'uk_sort_code_account',
+      accountName: 'ShiftBooking Platform — Update in Admin',
+      sortCode: '00-00-00',
+      accountNumber: '00000000',
+    };
+  }
+  if (existing?.platformFeePerShift == null) updates.platformFeePerShift = 10;
+  if (existing?.freeShiftsPerCafe == null) updates.freeShiftsPerCafe = 2;
+  if (Object.keys(updates).length === 0) return;
 
   await PlatformConfig.findOneAndUpdate(
     { key: 'platform' },
-    {
-      $set: {
-        bankDetails: {
-          type: 'uk_sort_code_account',
-          accountName: 'ShiftBooking Platform — Update in Admin',
-          sortCode: '00-00-00',
-          accountNumber: '00000000',
-        },
-        employeePriceDeductionPercentage: 25, // Default 25% deduction
-      },
-    },
+    { $set: updates },
     { upsert: true, new: true }
   );
   console.log('Platform config: default bank details seeded. Update via Admin → Platform Bank.');
