@@ -9,6 +9,7 @@ import { protect, requireApproval, AuthRequest } from '../middleware/auth';
 import { calculateShiftCost, calculateShiftCostWithFixedFee, calculatePenalty, getHoursFromShift } from '../utils/calculateShiftCost';
 import { differenceInHours } from 'date-fns';
 import { getSafeUserFields, sanitizeUser } from '../utils/sanitizeUser';
+import { shiftsOverlap } from '../utils/shiftConflict';
 import { uploadPaymentProof } from '../utils/uploadPaymentProof';
 
 const router = express.Router();
@@ -607,6 +608,28 @@ router.post('/:id/accept', protect, requireApproval, async (req: AuthRequest, re
     // Check if employee already accepted this shift
     if (shift.acceptedBy.some((id: any) => id.toString() === req.user!._id.toString())) {
       return res.status(400).json({ message: 'You have already accepted this shift' });
+    }
+
+    // Check for conflicting shifts (same date, overlapping times)
+    const existingShifts = await Shift.find({
+      acceptedBy: req.user._id,
+      status: { $in: ['open', 'accepted'] },
+      _id: { $ne: shift._id },
+    });
+
+    for (const existing of existingShifts) {
+      if (shiftsOverlap(
+        existing.date,
+        existing.startTime,
+        existing.endTime,
+        shift.date,
+        shift.startTime,
+        shift.endTime
+      )) {
+        return res.status(400).json({
+          message: `This shift conflicts with another shift you've accepted on ${new Date(existing.date).toLocaleDateString()} (${existing.startTime}-${existing.endTime}). Please cancel that shift first if you want to accept this one.`,
+        });
+      }
     }
 
     // Add employee to acceptedBy array

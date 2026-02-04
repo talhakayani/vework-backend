@@ -6,6 +6,7 @@ import User from '../models/User';
 import Review from '../models/Review';
 import { protect, requireApproval, AuthRequest } from '../middleware/auth';
 import { getSafeUserFields, sanitizeUser } from '../utils/sanitizeUser';
+import { shiftsOverlap } from '../utils/shiftConflict';
 
 const router = express.Router();
 
@@ -55,6 +56,51 @@ router.post(
           message: 'You have already applied for this shift',
           application: existingApplication,
         });
+      }
+
+      // Check for conflicting shifts (directly accepted or accepted via application)
+      const acceptedShifts = await Shift.find({
+        acceptedBy: req.user._id,
+        status: { $in: ['open', 'accepted'] },
+        _id: { $ne: shift._id },
+      });
+
+      const acceptedApplications = await Application.find({
+        employee: req.user._id,
+        status: 'accepted',
+      }).populate('shift');
+
+      for (const app of acceptedApplications) {
+        const appShift = app.shift as any;
+        if (!appShift || appShift._id.toString() === shiftId) continue;
+        if (appShift.status !== 'open' && appShift.status !== 'accepted') continue;
+        if (shiftsOverlap(
+          appShift.date,
+          appShift.startTime,
+          appShift.endTime,
+          shift.date,
+          shift.startTime,
+          shift.endTime
+        )) {
+          return res.status(400).json({
+            message: `This shift conflicts with another shift you've accepted on ${new Date(appShift.date).toLocaleDateString()} (${appShift.startTime}-${appShift.endTime}).`,
+          });
+        }
+      }
+
+      for (const existing of acceptedShifts) {
+        if (shiftsOverlap(
+          existing.date,
+          existing.startTime,
+          existing.endTime,
+          shift.date,
+          shift.startTime,
+          shift.endTime
+        )) {
+          return res.status(400).json({
+            message: `This shift conflicts with another shift you've accepted on ${new Date(existing.date).toLocaleDateString()} (${existing.startTime}-${existing.endTime}).`,
+          });
+        }
       }
 
       const application = await Application.create({
