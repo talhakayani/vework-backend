@@ -12,7 +12,7 @@ export async function seedPlatformConfig(): Promise<void> {
   if (!existing?.bankDetails?.accountName) {
     updates.bankDetails = {
       type: 'uk_sort_code_account',
-      accountName: 'ShiftBooking Platform — Update in Admin',
+      accountName: 'Vework Platform — Update in Admin',
       sortCode: '00-00-00',
       accountNumber: '00000000',
     };

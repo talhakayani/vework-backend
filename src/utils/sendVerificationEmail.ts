@@ -30,9 +30,9 @@ export async function sendVerificationEmail(
   });
 
   await transporter.sendMail({
-    from: process.env.SMTP_FROM || 'ShiftBooking <noreply@shiftbooking.com>',
+    from: process.env.SMTP_FROM || 'Vework <noreply@vework.com>',
     to: email,
-    subject: 'Verify your email - ShiftBooking',
+    subject: 'Verify your email - Vework',
     html: `
       <h2>Hi ${firstName},</h2>
       <p>Please verify your email address by clicking the link below:</p>

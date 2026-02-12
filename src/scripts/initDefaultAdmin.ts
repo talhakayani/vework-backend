@@ -3,12 +3,12 @@ import User from '../models/User';
 /**
  * Initialize default admin user if it doesn't exist
  * Default credentials:
- * Email: admin@shiftbooking.com
+ * Email: admin@vework.com
  * Password: admin123
  */
 export const initDefaultAdmin = async (): Promise<void> => {
   try {
-    const defaultEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@shiftbooking.com';
+    const defaultEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@vework.com';
     const defaultPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
 
     const existingAdmin = await User.findOne({ email: defaultEmail });

@@ -9,7 +9,7 @@ const createAdmin = async () => {
     await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/shiftbooking');
     console.log('Connected to MongoDB');
 
-    const adminEmail = process.argv[2] || 'admin@shiftbooking.com';
+    const adminEmail = process.argv[2] || 'admin@vework.com';
     const adminPassword = process.argv[3] || 'admin123';
 
     const existingAdmin = await User.findOne({ email: adminEmail });
