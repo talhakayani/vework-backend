@@ -136,8 +136,10 @@ router.get('/', protect, requireApproval, async (req: AuthRequest, res: Response
     } else if (req.user?.role === 'cafe') {
       // Cafés see only their own shifts
       query = { cafe: req.user._id };
-      // Filter: active (default) or completed
-      if (req.query.completed === 'true') {
+      // Single request for dashboard: return both active and completed
+      if (req.query.cafeDashboard === 'true') {
+        query.status = { $in: ['pending_approval', 'open', 'accepted', 'paused', 'completed'] };
+      } else if (req.query.completed === 'true') {
         query.status = 'completed';
       } else if (req.query.active === 'true' || !req.query.completed) {
         query.status = { $in: ['pending_approval', 'open', 'accepted', 'paused'] };
@@ -172,13 +174,19 @@ router.get('/', protect, requireApproval, async (req: AuthRequest, res: Response
         // Don't expose baseHourlyRate to employees
         delete (shiftObj as Record<string, unknown>).baseHourlyRate;
       } else if (req.user?.role === 'cafe') {
-        // Cafés see baseHourlyRate, not employeeHourlyRate
+        // Cafés see baseHourlyRate as hourlyRate; keep employeeHourlyRate so UI can show admin-set rate when shift is accepted
         shiftObj.hourlyRate = shiftObj.baseHourlyRate;
-        delete (shiftObj as Record<string, unknown>).employeeHourlyRate;
       }
 
       return shiftObj;
     });
+
+    // Cafe dashboard: single response with both active and completed
+    if (req.user?.role === 'cafe' && req.query.cafeDashboard === 'true') {
+      const active = sanitizedShifts.filter((s: any) => s.status !== 'completed');
+      const completed = sanitizedShifts.filter((s: any) => s.status === 'completed');
+      return res.json({ active, completed });
+    }
 
     res.json(sanitizedShifts);
   } catch (error: any) {
@@ -233,9 +241,8 @@ router.get('/:id', protect, requireApproval, async (req: AuthRequest, res: Respo
       shiftObj.hourlyRate = shiftObj.employeeHourlyRate ?? shiftObj.baseHourlyRate;
       delete (shiftObj as Record<string, unknown>).baseHourlyRate;
     } else if (req.user?.role === 'cafe') {
-      // Cafés see baseHourlyRate, not employeeHourlyRate
+      // Cafés see baseHourlyRate as hourlyRate; keep employeeHourlyRate so UI can show admin-set rate when shift is accepted
       shiftObj.hourlyRate = shiftObj.baseHourlyRate;
-      delete (shiftObj as Record<string, unknown>).employeeHourlyRate;
     }
 
     res.json(shiftObj);
@@ -480,7 +487,12 @@ router.delete('/:id', protect, requireApproval, async (req: AuthRequest, res: Re
       return res.status(403).json({ message: 'Only cafés can delete shifts' });
     }
 
-    const shift = await Shift.findById(req.params.id);
+    const shiftId = req.params.id;
+    if (!shiftId || !mongoose.Types.ObjectId.isValid(shiftId)) {
+      return res.status(400).json({ message: 'Invalid shift ID' });
+    }
+
+    const shift = await Shift.findById(shiftId);
     if (!shift) {
       return res.status(404).json({ message: 'Shift not found' });
     }
@@ -508,7 +520,14 @@ router.delete('/:id', protect, requireApproval, async (req: AuthRequest, res: Re
       }
     }
 
-    await Shift.findByIdAndDelete(req.params.id);
+    // Delete exactly one document: only this shift, scoped by _id and cafe (no bulk/query delete)
+    const result = await Shift.deleteOne({
+      _id: shift._id,
+      cafe: req.user._id,
+    });
+    if (result.deletedCount !== 1) {
+      return res.status(500).json({ message: 'Shift delete failed; no document was removed' });
+    }
     res.json({ message: 'Shift deleted' });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -627,7 +646,7 @@ router.post('/:id/accept', protect, requireApproval, async (req: AuthRequest, re
         shift.endTime
       )) {
         return res.status(400).json({
-          message: `This shift conflicts with another shift you've accepted on ${new Date(existing.date).toLocaleDateString()} (${existing.startTime}-${existing.endTime}). Please cancel that shift first if you want to accept this one.`,
+          message: `You have a conflict with an already accepted shift for this time (${new Date(existing.date).toLocaleDateString()} ${existing.startTime}-${existing.endTime}). Please cancel that shift first if you want to accept this one.`,
         });
       }
     }

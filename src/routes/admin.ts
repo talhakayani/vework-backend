@@ -510,4 +510,74 @@ router.get('/platform-config', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// @route   GET /api/admin/invoices
+// @desc    Get all invoices (Admin)
+// @access  Private (Admin)
+router.get('/invoices', async (req: AuthRequest, res: Response) => {
+  try {
+    const invoices = await Invoice.find()
+      .populate('cafe', 'firstName lastName email shopName shopAddress')
+      .populate({
+        path: 'shift',
+        populate: { path: 'acceptedBy', select: 'firstName lastName email' },
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json(invoices);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @route   PUT /api/admin/invoices/:id
+// @desc    Update invoice (status, platform fee, base amount, total amount)
+// @access  Private (Admin)
+router.put(
+  '/invoices/:id',
+  [
+    body('status').optional().isIn(['pending', 'paid']),
+    body('platformFee').optional().isFloat({ min: 0 }),
+    body('baseAmount').optional().isFloat({ min: 0 }),
+    body('totalAmount').optional().isFloat({ min: 0 }),
+  ],
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const invoice = await Invoice.findById(req.params.id);
+      if (!invoice) {
+        return res.status(404).json({ message: 'Invoice not found' });
+      }
+
+      if (req.body.status !== undefined) {
+        invoice.status = req.body.status;
+        if (req.body.status === 'paid') {
+          invoice.paidAt = new Date();
+        } else if (req.body.status === 'pending') {
+          invoice.paidAt = undefined;
+        }
+      }
+      if (req.body.platformFee !== undefined) {
+        invoice.platformFee = parseFloat(req.body.platformFee);
+      }
+      if (req.body.baseAmount !== undefined) {
+        invoice.baseAmount = parseFloat(req.body.baseAmount);
+      }
+      if (req.body.totalAmount !== undefined) {
+        invoice.totalAmount = parseFloat(req.body.totalAmount);
+      } else if (req.body.baseAmount !== undefined || req.body.platformFee !== undefined) {
+        invoice.totalAmount = invoice.baseAmount + invoice.platformFee + (invoice.penaltyAmount || 0);
+      }
+
+      await invoice.save();
+      res.json(invoice);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+);
+
 export default router;

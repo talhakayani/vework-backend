@@ -136,8 +136,7 @@ router.post('/generate/:shiftId', protect, requireApproval, async (req: AuthRequ
       platformFee: shift.platformFee,
       penaltyAmount: shift.penaltyAmount || 0,
       totalAmount: shift.totalCost + (shift.penaltyAmount || 0),
-      status: 'paid',
-      paidAt: new Date(),
+      status: 'pending',
     });
 
     res.status(201).json(invoice);

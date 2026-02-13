@@ -83,7 +83,7 @@ router.post(
           shift.endTime
         )) {
           return res.status(400).json({
-            message: `This shift conflicts with another shift you've accepted on ${new Date(appShift.date).toLocaleDateString()} (${appShift.startTime}-${appShift.endTime}).`,
+            message: `You have a conflict with an already accepted shift for this time (${new Date(appShift.date).toLocaleDateString()} ${appShift.startTime}-${appShift.endTime}). Please cancel that shift first if you want to apply for this one.`,
           });
         }
       }
@@ -98,7 +98,7 @@ router.post(
           shift.endTime
         )) {
           return res.status(400).json({
-            message: `This shift conflicts with another shift you've accepted on ${new Date(existing.date).toLocaleDateString()} (${existing.startTime}-${existing.endTime}).`,
+            message: `You have a conflict with an already accepted shift for this time (${new Date(existing.date).toLocaleDateString()} ${existing.startTime}-${existing.endTime}). Please cancel that shift first if you want to apply for this one.`,
           });
         }
       }

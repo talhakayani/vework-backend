@@ -58,5 +58,11 @@ export const getHoursFromShift = (startTime: string, endTime: string): number =>
   const [endHour, endMin] = endTime.split(':').map(Number);
   const startMinutes = startHour * 60 + startMin;
   const endMinutes = endHour * 60 + endMin;
-  return (endMinutes - startMinutes) / 60;
+  let durationMinutes = endMinutes - startMinutes;
+  // Overnight shift: end time is on the next day (e.g. 23:31 to 11:31)
+  if (durationMinutes < 0) {
+    durationMinutes += 24 * 60;
+  }
+  const hours = durationMinutes / 60;
+  return hours < 0 ? 0 : hours;
 };
