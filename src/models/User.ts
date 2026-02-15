@@ -30,6 +30,14 @@ export interface IUserSettings {
     timezone?: string;
 }
 
+export interface IAddress {
+    address: string;
+    latitude: number;
+    longitude: number;
+    placeId?: string;
+    label?: string;
+}
+
 export interface IUser extends Document {
     email: string;
     password: string;
@@ -51,6 +59,8 @@ export interface IUser extends Document {
     // Café specific fields
     shopName?: string;
     shopAddress?: string;
+    /** Café business addresses (for shift location dropdown). Each: address, latitude, longitude, optional placeId, optional label */
+    addresses?: IAddress[];
     cafeRating?: number; // café rating (stars from employees)
     totalCafeReviews?: number; // café total review count
     // Profile image (all roles) – path relative to backend root, e.g. uploads/avatars/avatar-xxx.jpg
@@ -118,6 +128,13 @@ const UserSchema = new Schema<IUser>(
         // Café fields
         shopName: String,
         shopAddress: String,
+        addresses: [{
+            address: { type: String, required: true },
+            latitude: { type: Number, required: true },
+            longitude: { type: Number, required: true },
+            placeId: String,
+            label: String,
+        }],
         cafeRating: { type: Number, default: 0, min: 0, max: 5 },
         totalCafeReviews: { type: Number, default: 0 },
         // Profile image (all roles)

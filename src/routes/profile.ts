@@ -180,6 +180,50 @@ router.put(
   }
 );
 
+// @route   PUT /api/profile/addresses
+// @desc    Update cafe business addresses (for shift location dropdown)
+// @access  Private (cafe only)
+router.put(
+  '/addresses',
+  protect,
+  [
+    body('addresses')
+      .isArray()
+      .withMessage('addresses must be an array'),
+    body('addresses.*.address').trim().notEmpty().withMessage('Each address must have an address string'),
+    body('addresses.*.latitude').isFloat({ min: -90, max: 90 }).withMessage('Invalid latitude'),
+    body('addresses.*.longitude').isFloat({ min: -180, max: 180 }).withMessage('Invalid longitude'),
+    body('addresses.*.placeId').optional().trim(),
+    body('addresses.*.label').optional().trim(),
+  ],
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (req.user?.role !== 'cafe') {
+        return res.status(403).json({ message: 'Only cafe accounts can update addresses' });
+      }
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+      const { addresses } = req.body;
+      const normalized = (addresses as any[]).map((a: any) => ({
+        address: String(a.address).trim(),
+        latitude: parseFloat(a.latitude),
+        longitude: parseFloat(a.longitude),
+        placeId: a.placeId ? String(a.placeId).trim() : undefined,
+        label: a.label ? String(a.label).trim() : undefined,
+      }));
+      const user = await User.findByIdAndUpdate(
+        req.user?._id,
+        { $set: { addresses: normalized } },
+        { new: true }
+      ).select('-password');
+      if (!user) return res.status(404).json({ message: 'User not found' });
+      res.json(userWithMaskedPayment(user));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+);
+
 // @route   PUT /api/profile/settings
 router.put(
   '/settings',

@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { IInvoice } from '../models/Invoice';
+import { formatDuration } from './formatDuration';
 
 export function generateInvoicePDF(invoice: any): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -43,7 +44,7 @@ export function generateInvoicePDF(invoice: any): Promise<Buffer> {
       day: 'numeric' 
     })}`);
     doc.text(`Time: ${invoice.shiftDetails.startTime} - ${invoice.shiftDetails.endTime}`);
-    doc.text(`Duration: ${invoice.shiftDetails.hours} hours`);
+    doc.text(`Duration: ${formatDuration(invoice.shiftDetails.hours)}`);
     doc.text(`Employees: ${invoice.shiftDetails.employees}`);
     doc.moveDown(2);
 
