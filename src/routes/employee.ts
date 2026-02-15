@@ -93,7 +93,7 @@ router.get('/history', protect, requireApproval, async (req: AuthRequest, res: R
 });
 
 // @route   GET /api/employee/earnings
-// @desc    Get employee's earnings summary (first-come-first-serve)
+// @desc    Get employee's earnings summary + this/last month + recent shifts
 // @access  Private (Employee)
 router.get('/earnings', protect, requireApproval, async (req: AuthRequest, res: Response) => {
   try {
@@ -101,30 +101,91 @@ router.get('/earnings', protect, requireApproval, async (req: AuthRequest, res: 
       return res.status(403).json({ message: 'Only employees can access this' });
     }
 
-    // Get shifts where employee is in acceptedBy array
+    const now = new Date();
+    const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+
     const completedShifts = await Shift.find({
       acceptedBy: req.user._id,
       status: 'completed',
-    });
+    })
+      .populate('cafe', 'shopName shopAddress')
+      .lean();
+
+    const round2 = (n: number) => Math.round(n * 100) / 100;
 
     let totalEarnings = 0;
     let totalHours = 0;
+    let thisMonthEarnings = 0;
+    let thisMonthHours = 0;
+    let thisMonthShifts = 0;
+    let lastMonthEarnings = 0;
+    let lastMonthHours = 0;
+    let lastMonthShifts = 0;
 
-    completedShifts.forEach((shift) => {
+    const recentShifts: Array<{
+      _id: string;
+      date: string;
+      earnings: number;
+      hours: number;
+      cafeName: string;
+    }> = [];
+
+    completedShifts.forEach((shift: any) => {
       const hours = getHoursFromShift(shift.startTime, shift.endTime);
-      // Use employeeHourlyRate if set, otherwise baseHourlyRate
       const hourlyRate = shift.employeeHourlyRate ?? shift.baseHourlyRate;
+      const earnings = hours * hourlyRate;
       totalHours += hours;
-      totalEarnings += hours * hourlyRate;
+      totalEarnings += earnings;
+
+      const shiftDate = new Date(shift.date);
+      if (shiftDate >= startOfThisMonth) {
+        thisMonthEarnings += earnings;
+        thisMonthHours += hours;
+        thisMonthShifts += 1;
+      } else if (shiftDate >= startOfLastMonth && shiftDate <= endOfLastMonth) {
+        lastMonthEarnings += earnings;
+        lastMonthHours += hours;
+        lastMonthShifts += 1;
+      }
+    });
+
+    // Build recent shifts (last 10), most recent first
+    const sortedByDate = [...completedShifts].sort(
+      (a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+    sortedByDate.slice(0, 10).forEach((shift: any) => {
+      const hours = getHoursFromShift(shift.startTime, shift.endTime);
+      const hourlyRate = shift.employeeHourlyRate ?? shift.baseHourlyRate;
+      const earnings = hours * hourlyRate;
+      const cafe = shift.cafe;
+      recentShifts.push({
+        _id: shift._id.toString(),
+        date: shift.date,
+        earnings: round2(earnings),
+        hours: round2(hours),
+        cafeName: cafe?.shopName || 'Cafe',
+      });
     });
 
     res.json({
-      totalEarnings: Math.round(totalEarnings * 100) / 100,
-      totalHours: Math.round(totalHours * 100) / 100,
+      totalEarnings: round2(totalEarnings),
+      totalHours: round2(totalHours),
       totalShifts: completedShifts.length,
-      averageEarningsPerShift: completedShifts.length > 0
-        ? Math.round((totalEarnings / completedShifts.length) * 100) / 100
-        : 0,
+      averageEarningsPerShift:
+        completedShifts.length > 0 ? round2(totalEarnings / completedShifts.length) : 0,
+      thisMonth: {
+        earnings: round2(thisMonthEarnings),
+        hours: round2(thisMonthHours),
+        shifts: thisMonthShifts,
+      },
+      lastMonth: {
+        earnings: round2(lastMonthEarnings),
+        hours: round2(lastMonthHours),
+        shifts: lastMonthShifts,
+      },
+      recentShifts,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
