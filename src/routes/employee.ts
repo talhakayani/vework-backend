@@ -70,19 +70,18 @@ router.get('/history', protect, requireApproval, async (req: AuthRequest, res: R
 
     const history = shifts.map((shift) => {
       const hours = getHoursFromShift(shift.startTime, shift.endTime);
-      // Use employeeHourlyRate if set, otherwise baseHourlyRate
       const hourlyRate = shift.employeeHourlyRate ?? shift.baseHourlyRate;
       const earnings = hours * hourlyRate;
       const shiftObj = shift.toObject() as unknown as Record<string, unknown>;
-      // Sanitize cafe data
       if (shiftObj.cafe) {
         shiftObj.cafe = sanitizeUser(shiftObj.cafe as any);
       }
+      // Omit rate fields so employees do not see base/hourly rates
+      const { baseHourlyRate, employeeHourlyRate, ...rest } = shiftObj as any;
       return {
-        ...shiftObj,
+        ...rest,
         hours,
         earnings,
-        hourlyRate, // Include the rate used for calculation
       };
     });
 
