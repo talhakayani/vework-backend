@@ -28,7 +28,7 @@ router.post(
     body('endTime').matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
     body('requiredEmployees').isInt({ min: 1 }),
     body('description').trim().notEmpty().withMessage('Description is required'),
-    body('hourlyRate').optional().isFloat({ min: 14 }).withMessage('Hourly rate must be at least £14'),
+    body('hourlyRate').optional().isFloat({ min: 0 }), // Must be >= tier base; default tier base
     body('location')
       .optional()
       .custom((value) => {
@@ -58,18 +58,46 @@ router.post(
         return res.status(400).json({ errors: errors.array() });
       }
 
-      const { date, startTime, endTime, requiredEmployees, description, hourlyRate, location } = req.body;
+      const { date, startTime, endTime, requiredEmployees, description, hourlyRate: clientHourlyRate, location } = req.body;
 
-      const baseHourlyRate = hourlyRate
-        ? parseFloat(hourlyRate)
-        : parseFloat(process.env.BASE_HOURLY_RATE || '14');
+      // Platform config: min hours before shift + tiered base prices
+      const config = await PlatformConfig.findOne({ key: 'platform' }).lean();
+      const minimumHoursBeforeShift = config?.minimumHoursBeforeShift ?? 3;
+      const basePriceTier3to12 = config?.basePriceTier3to12 ?? 17;
+      const basePriceTier12to24 = config?.basePriceTier12to24 ?? 16;
+      const basePriceTier24Plus = config?.basePriceTier24Plus ?? 14;
 
-      if (baseHourlyRate < 14) {
-        return res.status(400).json({ message: 'Hourly rate must be at least £14' });
+      // Shift must start at least minimumHoursBeforeShift (e.g. 3) hours from now
+      const shiftStartDate = new Date(`${date}T${startTime}:00`);
+      const now = new Date();
+      const hoursFromNow = (shiftStartDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+      if (hoursFromNow < minimumHoursBeforeShift) {
+        return res.status(400).json({
+          message: `Shift must start at least ${minimumHoursBeforeShift} hours from now. Selected time is ${hoursFromNow < 0 ? 'in the past' : `${hoursFromNow.toFixed(1)} hours from now`}.`,
+        });
+      }
+
+      // Minimum base price from tier; user can set a higher price per hour but not lower
+      let tierBasePrice: number;
+      if (hoursFromNow >= 24) {
+        tierBasePrice = basePriceTier24Plus;
+      } else if (hoursFromNow >= 12) {
+        tierBasePrice = basePriceTier12to24;
+      } else {
+        tierBasePrice = basePriceTier3to12;
+      }
+
+      const baseHourlyRate =
+        clientHourlyRate != null && clientHourlyRate !== ''
+          ? parseFloat(clientHourlyRate)
+          : tierBasePrice;
+      if (baseHourlyRate < tierBasePrice) {
+        return res.status(400).json({
+          message: `Price per hour cannot be less than £${tierBasePrice.toFixed(2)} (minimum for this posting time).`,
+        });
       }
 
       // Platform fee: first N shifts per cafe free, then £X per shift (employer pays, employee pays nothing)
-      const config = await PlatformConfig.findOne({ key: 'platform' }).lean();
       const platformFeePerShift = config?.platformFeePerShift ?? 10;
       const freeShiftsPerCafe = config?.freeShiftsPerCafe ?? 2;
 
@@ -127,11 +155,15 @@ router.get('/', protect, requireApproval, async (req: AuthRequest, res: Response
     let query: any = {};
 
     if (req.user?.role === 'employee') {
-      // Employees see only open shifts (first-come-first-serve, no application filtering)
-      // Exclude shifts where employee is blocked by cafe owner
+      // Employees see only open shifts; exclude blocked; respect admin visibility (all vs selected)
       query = {
         status: 'open',
         blockedEmployees: { $nin: [req.user._id] },
+        $or: [
+          { visibility: { $ne: 'selected' } },
+          { visibility: { $exists: false } },
+          { visibleToEmployees: req.user._id },
+        ],
       };
     } else if (req.user?.role === 'cafe') {
       // Cafés see only their own shifts
@@ -210,14 +242,20 @@ router.get('/:id', protect, requireApproval, async (req: AuthRequest, res: Respo
 
     // Check if employee is blocked from this shift
     if (req.user?.role === 'employee' && req.user) {
-      // Check if employee is blocked
       if (shift.blockedEmployees && shift.blockedEmployees.some((id: any) =>
         id.toString() === req.user!._id.toString()
       )) {
         return res.status(403).json({ message: 'You have been blocked from viewing this shift' });
       }
-
-      // Employees can only see open shifts (unless they're already accepted to it)
+      // Visibility: if shift is for selected employees only, this employee must be in the list
+      const visibility = (shift as any).visibility || 'all';
+      if (visibility === 'selected') {
+        const visibleIds = (shift as any).visibleToEmployees || [];
+        const canSee = visibleIds.some((id: any) => id.toString() === req.user!._id.toString());
+        if (!canSee) {
+          return res.status(403).json({ message: 'This shift is not visible to you' });
+        }
+      }
       const isAccepted = shift.acceptedBy.some((id: any) =>
         id.toString() === req.user!._id.toString()
       );

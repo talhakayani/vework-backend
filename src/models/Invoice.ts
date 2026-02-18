@@ -1,5 +1,7 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
+export type InvoiceStatus = 'draft' | 'approved' | 'pending_verification' | 'paid';
+
 export interface IInvoice extends Document {
   cafe: mongoose.Types.ObjectId;
   shift: mongoose.Types.ObjectId;
@@ -15,9 +17,16 @@ export interface IInvoice extends Document {
   platformFee: number;
   penaltyAmount: number;
   totalAmount: number;
-  status: 'pending' | 'paid';
+  status: InvoiceStatus;
   createdAt: Date;
   paidAt?: Date;
+  /** Payment proof file path (relative), set when café submits proof */
+  paymentProof?: string;
+  paymentProofSubmittedAt?: Date;
+  paymentProofNotes?: string;
+  /** Set when admin rejects proof and asks for resubmission */
+  paymentProofRejectionReason?: string;
+  paymentProofRejectedAt?: Date;
 }
 
 const InvoiceSchema = new Schema<IInvoice>(
@@ -62,10 +71,15 @@ const InvoiceSchema = new Schema<IInvoice>(
     },
     status: {
       type: String,
-      enum: ['pending', 'paid'],
-      default: 'pending',
+      enum: ['draft', 'approved', 'pending_verification', 'paid'],
+      default: 'draft',
     },
     paidAt: Date,
+    paymentProof: String,
+    paymentProofSubmittedAt: Date,
+    paymentProofNotes: String,
+    paymentProofRejectionReason: String,
+    paymentProofRejectedAt: Date,
   },
   {
     timestamps: true,

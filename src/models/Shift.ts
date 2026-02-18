@@ -10,6 +10,10 @@ export interface IShift extends Document {
   status: 'pending_approval' | 'open' | 'accepted' | 'completed' | 'cancelled' | 'paused';
   acceptedBy: mongoose.Types.ObjectId[];
   blockedEmployees?: mongoose.Types.ObjectId[]; // Employees blocked from this shift by café owner
+  /** Who can see this shift: 'all' = all employees, 'selected' = only visibleToEmployees (admin decision) */
+  visibility?: 'all' | 'selected';
+  /** When visibility === 'selected', only these employees see the shift in listings */
+  visibleToEmployees?: mongoose.Types.ObjectId[];
   baseHourlyRate: number;
   employeeHourlyRate?: number; // Admin-set rate visible only to employees
   platformFee: number;
@@ -26,6 +30,11 @@ export interface IShift extends Document {
     placeId?: string;
   };
   paymentProof?: string; // Path to payment proof file (receipt/screenshot)
+  /** Employee IDs who have been paid for this shift (admin marks via panel) */
+  paidToEmployees?: mongoose.Types.ObjectId[];
+  /** Proof of payment to employees (admin upload when marking as paid) */
+  employeePaymentProof?: string;
+  employeePaymentProofAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -71,6 +80,17 @@ const ShiftSchema = new Schema<IShift>(
       },
     ],
     blockedEmployees: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
+    visibility: {
+      type: String,
+      enum: ['all', 'selected'],
+      default: 'all',
+    },
+    visibleToEmployees: [
       {
         type: Schema.Types.ObjectId,
         ref: 'User',
@@ -125,6 +145,14 @@ const ShiftSchema = new Schema<IShift>(
     paymentProof: {
       type: String,
     },
+    paidToEmployees: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
+    employeePaymentProof: { type: String },
+    employeePaymentProofAt: { type: Date },
   },
   {
     timestamps: true,

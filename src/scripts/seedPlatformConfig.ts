@@ -19,6 +19,10 @@ export async function seedPlatformConfig(): Promise<void> {
   }
   if (existing?.platformFeePerShift == null) updates.platformFeePerShift = 10;
   if (existing?.freeShiftsPerCafe == null) updates.freeShiftsPerCafe = 2;
+  if (existing?.minimumHoursBeforeShift == null) updates.minimumHoursBeforeShift = 3;
+  if (existing?.basePriceTier3to12 == null) updates.basePriceTier3to12 = 17;
+  if (existing?.basePriceTier12to24 == null) updates.basePriceTier12to24 = 16;
+  if (existing?.basePriceTier24Plus == null) updates.basePriceTier24Plus = 14;
   if (Object.keys(updates).length === 0) return;
 
   await PlatformConfig.findOneAndUpdate(

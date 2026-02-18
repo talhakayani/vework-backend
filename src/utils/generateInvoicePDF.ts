@@ -92,8 +92,14 @@ export function generateInvoicePDF(invoice: any): Promise<Buffer> {
     // Status
     doc.moveDown(3);
     doc.fontSize(10).font('Helvetica');
-    const statusText = invoice.status === 'paid' ? 'PAID' : 'PENDING';
-    const statusColor = invoice.status === 'paid' ? 'green' : 'orange';
+    const statusLabels: Record<string, string> = {
+      draft: 'DRAFT',
+      approved: 'APPROVED (Awaiting payment)',
+      pending_verification: 'PENDING VERIFICATION',
+      paid: 'PAID',
+    };
+    const statusText = statusLabels[invoice.status] || invoice.status?.toUpperCase() || 'PENDING';
+    const statusColor = invoice.status === 'paid' ? 'green' : invoice.status === 'draft' ? 'gray' : 'orange';
     doc.fillColor(statusColor).text(`Status: ${statusText}`, { align: 'right' });
     doc.fillColor('black');
 

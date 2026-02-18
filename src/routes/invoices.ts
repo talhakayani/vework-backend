@@ -1,15 +1,14 @@
 import express, { Response } from 'express';
 import Invoice from '../models/Invoice';
-import Shift from '../models/Shift';
 import { protect, requireApproval, AuthRequest } from '../middleware/auth';
-import { getHoursFromShift } from '../utils/calculateShiftCost';
 import { getSafeUserFields, sanitizeUser } from '../utils/sanitizeUser';
 import { generateInvoicePDF } from '../utils/generateInvoicePDF';
+import { uploadPaymentProof } from '../utils/uploadPaymentProof';
 
 const router = express.Router();
 
 // @route   GET /api/invoices
-// @desc    Get invoices (filtered by role)
+// @desc    Get invoices (filtered by role). Cafés only see approved/pending_verification/paid.
 // @access  Private
 router.get('/', protect, requireApproval, async (req: AuthRequest, res: Response) => {
   try {
@@ -17,6 +16,7 @@ router.get('/', protect, requireApproval, async (req: AuthRequest, res: Response
 
     if (req.user?.role === 'cafe') {
       query.cafe = req.user._id;
+      query.status = { $in: ['approved', 'pending_verification', 'paid'] };
     }
 
     const invoices = await Invoice.find(query)
@@ -94,56 +94,47 @@ router.get('/:id/pdf', protect, requireApproval, async (req: AuthRequest, res: R
   }
 });
 
-// @route   POST /api/invoices/generate/:shiftId
-// @desc    Generate invoice for shift
-// @access  Private (Café or Admin)
-router.post('/generate/:shiftId', protect, requireApproval, async (req: AuthRequest, res: Response) => {
-  try {
-    if (req.user?.role !== 'cafe' && req.user?.role !== 'admin') {
-      return res.status(403).json({ message: 'Not authorized' });
+// @route   POST /api/invoices/:id/submit-proof
+// @desc    Submit payment proof (Café only). Only when status is 'approved'.
+// @access  Private (Café)
+router.post(
+  '/:id/submit-proof',
+  protect,
+  requireApproval,
+  uploadPaymentProof.single('paymentProof'),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (req.user?.role !== 'cafe') {
+        return res.status(403).json({ message: 'Not authorized' });
+      }
+      const invoice = await Invoice.findById(req.params.id);
+      if (!invoice) return res.status(404).json({ message: 'Invoice not found' });
+      if (invoice.cafe.toString() !== req.user!._id.toString()) {
+        return res.status(403).json({ message: 'Not authorized' });
+      }
+      if (invoice.status !== 'approved') {
+        return res.status(400).json({
+          message: 'Payment proof can only be submitted for invoices that are approved and awaiting payment',
+        });
+      }
+      if (!req.file) {
+        return res.status(400).json({ message: 'Payment proof file is required (image or PDF)' });
+      }
+      const paymentProofPath = `uploads/payment-proofs/${req.file.filename}`;
+      invoice.paymentProof = paymentProofPath;
+      invoice.paymentProofSubmittedAt = new Date();
+      invoice.paymentProofNotes = typeof req.body.notes === 'string' ? req.body.notes.trim() : undefined;
+      invoice.status = 'pending_verification';
+      await invoice.save();
+      const populated = await Invoice.findById(invoice._id)
+        .populate('cafe', getSafeUserFields('cafe'))
+        .populate({ path: 'shift', populate: { path: 'acceptedBy', select: 'firstName lastName email' } });
+      res.json(populated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
-
-    const shift = await Shift.findById(req.params.id);
-    if (!shift) {
-      return res.status(404).json({ message: 'Shift not found' });
-    }
-
-    if (req.user?.role === 'cafe' && shift.cafe.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Not authorized' });
-    }
-
-    // Check if invoice already exists
-    const existingInvoice = await Invoice.findOne({ shift: shift._id });
-    if (existingInvoice) {
-      return res.status(400).json({ message: 'Invoice already exists', invoice: existingInvoice });
-    }
-
-    const hours = getHoursFromShift(shift.startTime, shift.endTime);
-    const invoiceNumber = `INV-${Date.now()}-${shift._id.toString().slice(-6)}`;
-
-    const invoice = await Invoice.create({
-      cafe: shift.cafe,
-      shift: shift._id,
-      invoiceNumber,
-      shiftDetails: {
-        date: shift.date,
-        startTime: shift.startTime,
-        endTime: shift.endTime,
-        hours,
-        employees: shift.acceptedBy.length,
-      },
-      baseAmount: shift.baseHourlyRate * hours * shift.acceptedBy.length,
-      platformFee: shift.platformFee,
-      penaltyAmount: shift.penaltyAmount || 0,
-      totalAmount: shift.totalCost + (shift.penaltyAmount || 0),
-      status: 'pending',
-    });
-
-    res.status(201).json(invoice);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
   }
-});
+);
 
 // @route   GET /api/invoices/:id
 // @desc    Get single invoice

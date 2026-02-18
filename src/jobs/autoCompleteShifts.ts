@@ -43,7 +43,7 @@ export async function runAutoCompleteShifts(): Promise<void> {
           platformFee: shift.platformFee || 0,
           penaltyAmount: shift.penaltyAmount || 0,
           totalAmount: (shift.totalCost || 0) + (shift.penaltyAmount || 0),
-          status: 'pending',
+          status: 'draft',
         });
       }
 

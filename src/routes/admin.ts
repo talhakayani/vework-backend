@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import express, { Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import User from '../models/User';
@@ -5,10 +6,38 @@ import Shift from '../models/Shift';
 import Invoice from '../models/Invoice';
 import Application from '../models/Application';
 import PlatformConfig from '../models/PlatformConfig';
+import EmployeeWeekPayment from '../models/EmployeeWeekPayment';
 import { protect, authorize, AuthRequest } from '../middleware/auth';
-import { getHoursFromShift } from '../utils/calculateShiftCost';
+import { getHoursFromShift, calculateShiftCostWithFixedFee } from '../utils/calculateShiftCost';
+import { uploadPaymentProof } from '../utils/uploadPaymentProof';
 
 const router = express.Router();
+
+function getStartOfWeek(d: Date): Date {
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  const start = new Date(d);
+  start.setDate(diff);
+  start.setHours(0, 0, 0, 0);
+  return start;
+}
+function getEndOfWeek(d: Date): Date {
+  const start = getStartOfWeek(d);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return end;
+}
+/** Return Monday and Sunday as YYYY-MM-DD (local date only, no UTC shift) */
+function getWeekRangeAsStrings(d: Date): { weekStart: string; weekEnd: string } {
+  const start = getStartOfWeek(new Date(d));
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const weekStart = `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`;
+  const weekEnd = `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}`;
+  return { weekStart, weekEnd };
+}
 
 const formatSortCode = (v: string): string => {
   const d = String(v).replace(/\D/g, '').slice(0, 6);
@@ -170,6 +199,7 @@ router.get('/shifts', async (req: AuthRequest, res: Response) => {
       .populate('cafe', 'shopName shopAddress')
       .populate('acceptedBy', 'firstName lastName email')
       .populate('blockedEmployees', 'firstName lastName email')
+      .populate('visibleToEmployees', 'firstName lastName email')
       .sort({ createdAt: -1 });
 
     // Fetch rejection reasons for blocked employees from Application records
@@ -229,6 +259,9 @@ router.put(
   [
     body('employeeHourlyRate').optional().isFloat({ min: 0 }),
     body('baseHourlyRate').optional().isFloat({ min: 14 }),
+    body('visibility').optional().isIn(['all', 'selected']),
+    body('visibleToEmployees').optional().isArray(),
+    body('visibleToEmployees.*').optional().isMongoId(),
     body('startTime').optional().matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
     body('endTime').optional().matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
     body('date').optional().isISO8601(),
@@ -252,15 +285,27 @@ router.put(
       const updates: any = {};
       if (req.body.employeeHourlyRate !== undefined) updates.employeeHourlyRate = parseFloat(req.body.employeeHourlyRate);
       if (req.body.baseHourlyRate !== undefined) updates.baseHourlyRate = parseFloat(req.body.baseHourlyRate);
+      if (req.body.visibility !== undefined) updates.visibility = req.body.visibility;
+      if (req.body.visibleToEmployees !== undefined) updates.visibleToEmployees = Array.isArray(req.body.visibleToEmployees) ? req.body.visibleToEmployees : [];
       if (req.body.startTime !== undefined) updates.startTime = req.body.startTime;
       if (req.body.endTime !== undefined) updates.endTime = req.body.endTime;
       if (req.body.date !== undefined) updates.date = req.body.date;
       if (req.body.requiredEmployees !== undefined) updates.requiredEmployees = req.body.requiredEmployees;
       if (req.body.description !== undefined) updates.description = req.body.description;
 
+      // Recalculate totalCost when base rate (or times/requiredEmployees) change
+      const baseRate = updates.baseHourlyRate ?? shift.baseHourlyRate;
+      const startTime = updates.startTime ?? shift.startTime;
+      const endTime = updates.endTime ?? shift.endTime;
+      const requiredEmployees = updates.requiredEmployees ?? shift.requiredEmployees;
+      const platformFee = shift.platformFee ?? 0;
+      const { totalCost } = calculateShiftCostWithFixedFee(startTime, endTime, baseRate, requiredEmployees, platformFee);
+      updates.totalCost = totalCost;
+
       const updatedShift = await Shift.findByIdAndUpdate(req.params.id, { $set: updates }, { new: true })
         .populate('cafe', 'shopName shopAddress')
-        .populate('acceptedBy', 'firstName lastName email');
+        .populate('acceptedBy', 'firstName lastName email')
+        .populate('visibleToEmployees', 'firstName lastName email');
 
       res.json(updatedShift);
     } catch (error: any) {
@@ -309,55 +354,15 @@ router.put(
         return res.json(populatedShift);
       }
 
-      // Handle completed shifts (payment verification and invoice generation)
+      // Handle completed shifts: just acknowledge (invoice is auto-generated by job)
       if (shift.status === 'completed') {
-        // Check if invoice already exists
-        const existingInvoice = await Invoice.findOne({ shift: shift._id });
-        if (existingInvoice) {
-          return res.status(400).json({ message: 'Invoice already exists for this shift' });
-        }
-
-        // Ensure acceptedBy is an array and check length
-        const acceptedByArray = Array.isArray(shift.acceptedBy) ? shift.acceptedBy : [];
-        const acceptedCount = acceptedByArray.length;
-
-        // Generate invoice with paid status (admin has verified payment)
-        if (acceptedCount > 0) {
-          const hours = getHoursFromShift(shift.startTime, shift.endTime);
-          const invoiceNumber = `INV-${Date.now()}-${shift._id.toString().slice(-6)}`;
-
-          const invoice = await Invoice.create({
-            cafe: shift.cafe,
-            shift: shift._id,
-            invoiceNumber,
-            shiftDetails: {
-              date: shift.date,
-              startTime: shift.startTime,
-              endTime: shift.endTime,
-              hours,
-              employees: acceptedCount,
-            },
-            baseAmount: shift.baseHourlyRate * hours * acceptedCount,
-            platformFee: shift.platformFee,
-            penaltyAmount: shift.penaltyAmount || 0,
-            totalAmount: shift.totalCost + (shift.penaltyAmount || 0),
-            status: 'paid',
-            paidAt: new Date(),
-          });
-
-          // Populate shift for response
-          const populatedShift = await Shift.findById(shift._id)
-            .populate('cafe', 'shopName shopAddress')
-            .populate('acceptedBy', 'firstName lastName');
-
-          return res.json({
-            shift: populatedShift,
-            invoice,
-            message: 'Payment verified and invoice generated'
-          });
-        } else {
-          return res.status(400).json({ message: 'Cannot generate invoice: shift has no accepted employees' });
-        }
+        const populatedShift = await Shift.findById(shift._id)
+          .populate('cafe', 'shopName shopAddress')
+          .populate('acceptedBy', 'firstName lastName');
+        return res.json({
+          shift: populatedShift,
+          message: 'Shift already completed. Invoice is managed separately in Invoices.',
+        });
       }
 
       return res.status(400).json({ message: 'Only pending-approval or completed shifts can be approved' });
@@ -366,6 +371,199 @@ router.put(
       res.status(500).json({ message: error.message || 'Failed to approve shift' });
     }
   });
+
+// @route   GET /api/admin/employee-payments
+// @desc    List employee payments grouped by week (one combined payment per employee per week)
+// @access  Private (Admin)
+router.get('/employee-payments', async (req: AuthRequest, res: Response) => {
+  try {
+    const shifts = await Shift.find({ status: 'completed' })
+      .populate('cafe', 'shopName shopAddress')
+      .populate('acceptedBy', 'firstName lastName email')
+      .sort({ date: -1 })
+      .lean();
+
+    // Build (weekStart, employeeId) -> { totalAmount, shiftIds, employeeName, employeeEmail }
+    const weekEmployeeMap = new Map<
+      string,
+      { totalAmount: number; shiftIds: string[]; employeeId: string; employeeName: string; employeeEmail?: string }
+    >();
+
+    for (const shift of shifts as any[]) {
+      const hours = getHoursFromShift(shift.startTime, shift.endTime);
+      const hourlyRate = shift.employeeHourlyRate ?? shift.baseHourlyRate;
+      const shiftDate = new Date(shift.date);
+      const { weekStart: weekKey } = getWeekRangeAsStrings(shiftDate);
+
+      const employees = shift.acceptedBy || [];
+      for (const emp of employees) {
+        const e = typeof emp === 'object' ? emp : null;
+        const employeeId = e?._id?.toString() || (typeof emp === 'object' && (emp as any).toString ? (emp as any).toString() : String(emp));
+        const key = `${weekKey}_${employeeId}`;
+        const amount = Math.round(hours * hourlyRate * 100) / 100;
+        const existing = weekEmployeeMap.get(key);
+        if (existing) {
+          existing.totalAmount = Math.round((existing.totalAmount + amount) * 100) / 100;
+          existing.shiftIds.push(shift._id.toString());
+        } else {
+          weekEmployeeMap.set(key, {
+            totalAmount: amount,
+            shiftIds: [shift._id.toString()],
+            employeeId,
+            employeeName: e ? `${e.firstName || ''} ${e.lastName || ''}`.trim() || 'Unknown' : 'Unknown',
+            employeeEmail: e?.email,
+          });
+        }
+      }
+    }
+
+    const paidRecords = await EmployeeWeekPayment.find({ status: 'paid' }).lean();
+    const paidMap = new Map<string, { paymentProof: string; paidAt: string }>();
+    const toYYYYMMDD = (d: Date) => {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    };
+    for (const r of paidRecords as any[]) {
+      const d = new Date((r as any).weekStart);
+      const weekStartStr = toYYYYMMDD(d);
+      const k = `${weekStartStr}_${r.employee.toString()}`;
+      paidMap.set(k, {
+        paymentProof: r.paymentProof || '',
+        paidAt: r.paidAt ? new Date(r.paidAt).toISOString() : '',
+      });
+    }
+
+    const periodsByWeek = new Map<
+      string,
+      { weekStart: string; weekEnd: string; employees: Array<{
+        employeeId: string;
+        employeeName: string;
+        employeeEmail?: string;
+        totalAmount: number;
+        shiftIds: string[];
+        shiftCount: number;
+        paid: boolean;
+        paymentProof?: string;
+        paidAt?: string;
+      }> }
+    >();
+
+    for (const [key, data] of weekEmployeeMap) {
+      const [weekKey, employeeId] = key.split('_');
+      const { weekStart: weekStartStr, weekEnd: weekEndStr } = getWeekRangeAsStrings(new Date(weekKey + 'T12:00:00'));
+      const paid = paidMap.get(key);
+
+      if (!periodsByWeek.has(weekKey)) {
+        periodsByWeek.set(weekKey, {
+          weekStart: weekStartStr,
+          weekEnd: weekEndStr,
+          employees: [],
+        });
+      }
+      periodsByWeek.get(weekKey)!.employees.push({
+        employeeId: data.employeeId,
+        employeeName: data.employeeName,
+        employeeEmail: data.employeeEmail,
+        totalAmount: data.totalAmount,
+        shiftIds: data.shiftIds,
+        shiftCount: data.shiftIds.length,
+        paid: !!paid,
+        paymentProof: paid?.paymentProof,
+        paidAt: paid?.paidAt,
+      });
+    }
+
+    const periods = Array.from(periodsByWeek.values()).sort(
+      (a, b) => new Date(b.weekStart).getTime() - new Date(a.weekStart).getTime()
+    );
+
+    res.json({ periods });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @route   POST /api/admin/employee-payments/mark-week-paid
+// @desc    Mark one week's combined payment as paid for given employees. Requires payment proof.
+// @access  Private (Admin)
+router.post(
+  '/employee-payments/mark-week-paid',
+  uploadPaymentProof.single('paymentProof'),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: 'Proof of payment file is required (image or PDF)' });
+      }
+
+      let weekStartStr: string = req.body.weekStart;
+      if (!weekStartStr) return res.status(400).json({ message: 'weekStart is required (YYYY-MM-DD)' });
+
+      let employeeIds: string[] = [];
+      if (Array.isArray(req.body.employeeIds)) {
+        employeeIds = req.body.employeeIds;
+      } else if (typeof req.body.employeeIds === 'string') {
+        try {
+          employeeIds = JSON.parse(req.body.employeeIds);
+        } catch {
+          return res.status(400).json({ message: 'employeeIds must be a JSON array of IDs' });
+        }
+      }
+      if (!Array.isArray(employeeIds) || employeeIds.length === 0) {
+        return res.status(400).json({ message: 'At least one employee ID is required' });
+      }
+
+      // Parse as local date (YYYY-MM-DD at noon avoids UTC midnight timezone issues), then normalize to Monday of that week
+      const parsed = new Date(weekStartStr + 'T12:00:00');
+      if (isNaN(parsed.getTime())) {
+        return res.status(400).json({ message: 'weekStart must be a valid date (YYYY-MM-DD)' });
+      }
+      const weekStart = getStartOfWeek(parsed);
+      weekStart.setHours(0, 0, 0, 0);
+      const weekEnd = getEndOfWeek(new Date(weekStart));
+
+      const proofPath = `uploads/payment-proofs/${req.file.filename}`;
+
+      const completedShifts = await Shift.find({
+        status: 'completed',
+        date: { $gte: weekStart, $lte: weekEnd },
+        acceptedBy: { $in: employeeIds.map((id: string) => new mongoose.Types.ObjectId(id)) },
+      }).lean();
+
+      for (const empId of employeeIds) {
+        const shiftsForEmployee = (completedShifts as any[]).filter((s) =>
+          s.acceptedBy.some((id: any) => id.toString() === empId)
+        );
+        let amount = 0;
+        const shiftIds: mongoose.Types.ObjectId[] = [];
+        for (const s of shiftsForEmployee) {
+          const hours = getHoursFromShift(s.startTime, s.endTime);
+          const rate = s.employeeHourlyRate ?? s.baseHourlyRate;
+          amount += hours * rate;
+          shiftIds.push(s._id);
+        }
+        amount = Math.round(amount * 100) / 100;
+        if (shiftIds.length === 0) continue;
+
+        await EmployeeWeekPayment.findOneAndUpdate(
+          { employee: empId, weekStart },
+          {
+            amount,
+            shiftIds,
+            status: 'paid',
+            paymentProof: proofPath,
+            paidAt: new Date(),
+            paidBy: req.user!._id,
+          },
+          { upsert: true, new: true }
+        );
+      }
+
+      res.json({ message: 'Week payment marked as paid', weekStart: weekStartStr, employeeIds });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+);
 
 // @route   PUT /api/admin/config
 // @desc    Update platform configuration
@@ -460,6 +658,10 @@ router.put(
     body('employeePriceDeductionPercentage').optional().isFloat({ min: 0, max: 100 }),
     body('platformFeePerShift').optional().isFloat({ min: 0 }),
     body('freeShiftsPerCafe').optional().isInt({ min: 0 }),
+    body('minimumHoursBeforeShift').optional().isFloat({ min: 0 }),
+    body('basePriceTier3to12').optional().isFloat({ min: 0 }),
+    body('basePriceTier12to24').optional().isFloat({ min: 0 }),
+    body('basePriceTier24Plus').optional().isFloat({ min: 0 }),
   ],
   async (req: AuthRequest, res: Response) => {
     try {
@@ -476,6 +678,18 @@ router.put(
       if (req.body.freeShiftsPerCafe !== undefined) {
         updateData.freeShiftsPerCafe = parseInt(req.body.freeShiftsPerCafe, 10);
       }
+      if (req.body.minimumHoursBeforeShift !== undefined) {
+        updateData.minimumHoursBeforeShift = parseFloat(req.body.minimumHoursBeforeShift);
+      }
+      if (req.body.basePriceTier3to12 !== undefined) {
+        updateData.basePriceTier3to12 = parseFloat(req.body.basePriceTier3to12);
+      }
+      if (req.body.basePriceTier12to24 !== undefined) {
+        updateData.basePriceTier12to24 = parseFloat(req.body.basePriceTier12to24);
+      }
+      if (req.body.basePriceTier24Plus !== undefined) {
+        updateData.basePriceTier24Plus = parseFloat(req.body.basePriceTier24Plus);
+      }
 
       const config = await PlatformConfig.findOneAndUpdate(
         { key: 'platform' },
@@ -487,6 +701,10 @@ router.put(
         employeePriceDeductionPercentage: config.employeePriceDeductionPercentage ?? 0,
         platformFeePerShift: config.platformFeePerShift ?? 10,
         freeShiftsPerCafe: config.freeShiftsPerCafe ?? 2,
+        minimumHoursBeforeShift: config.minimumHoursBeforeShift ?? 3,
+        basePriceTier3to12: config.basePriceTier3to12 ?? 17,
+        basePriceTier12to24: config.basePriceTier12to24 ?? 16,
+        basePriceTier24Plus: config.basePriceTier24Plus ?? 14,
       });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -504,6 +722,10 @@ router.get('/platform-config', async (req: AuthRequest, res: Response) => {
       employeePriceDeductionPercentage: config?.employeePriceDeductionPercentage ?? 0,
       platformFeePerShift: config?.platformFeePerShift ?? 10,
       freeShiftsPerCafe: config?.freeShiftsPerCafe ?? 2,
+      minimumHoursBeforeShift: config?.minimumHoursBeforeShift ?? 3,
+      basePriceTier3to12: config?.basePriceTier3to12 ?? 17,
+      basePriceTier12to24: config?.basePriceTier12to24 ?? 16,
+      basePriceTier24Plus: config?.basePriceTier24Plus ?? 14,
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
@@ -530,15 +752,14 @@ router.get('/invoices', async (req: AuthRequest, res: Response) => {
 });
 
 // @route   PUT /api/admin/invoices/:id
-// @desc    Update invoice (status, platform fee, base amount, total amount)
+// @desc    Update invoice: platform fee, penalty (base amount is read-only). Approve (draft→approved) or verify payment (pending_verification→paid).
 // @access  Private (Admin)
 router.put(
   '/invoices/:id',
   [
-    body('status').optional().isIn(['pending', 'paid']),
+    body('status').optional().isIn(['approved', 'paid']),
     body('platformFee').optional().isFloat({ min: 0 }),
-    body('baseAmount').optional().isFloat({ min: 0 }),
-    body('totalAmount').optional().isFloat({ min: 0 }),
+    body('penaltyAmount').optional().isFloat({ min: 0 }),
   ],
   async (req: AuthRequest, res: Response) => {
     try {
@@ -552,28 +773,66 @@ router.put(
         return res.status(404).json({ message: 'Invoice not found' });
       }
 
-      if (req.body.status !== undefined) {
-        invoice.status = req.body.status;
-        if (req.body.status === 'paid') {
-          invoice.paidAt = new Date();
-        } else if (req.body.status === 'pending') {
-          invoice.paidAt = undefined;
-        }
-      }
       if (req.body.platformFee !== undefined) {
         invoice.platformFee = parseFloat(req.body.platformFee);
       }
-      if (req.body.baseAmount !== undefined) {
-        invoice.baseAmount = parseFloat(req.body.baseAmount);
+      if (req.body.penaltyAmount !== undefined) {
+        invoice.penaltyAmount = parseFloat(req.body.penaltyAmount);
       }
-      if (req.body.totalAmount !== undefined) {
-        invoice.totalAmount = parseFloat(req.body.totalAmount);
-      } else if (req.body.baseAmount !== undefined || req.body.platformFee !== undefined) {
-        invoice.totalAmount = invoice.baseAmount + invoice.platformFee + (invoice.penaltyAmount || 0);
+      // Recalculate total (base is read-only)
+      invoice.totalAmount = invoice.baseAmount + invoice.platformFee + (invoice.penaltyAmount || 0);
+
+      if (req.body.status === 'approved') {
+        if (invoice.status !== 'draft') {
+          return res.status(400).json({ message: 'Only draft invoices can be approved' });
+        }
+        invoice.status = 'approved';
+      } else if (req.body.status === 'paid') {
+        if (invoice.status !== 'pending_verification') {
+          return res.status(400).json({ message: 'Only invoices with submitted payment proof can be marked paid' });
+        }
+        invoice.status = 'paid';
+        invoice.paidAt = new Date();
       }
 
       await invoice.save();
-      res.json(invoice);
+      const populated = await Invoice.findById(invoice._id)
+        .populate('cafe', 'firstName lastName email shopName shopAddress')
+        .populate({ path: 'shift', populate: { path: 'acceptedBy', select: 'firstName lastName email' } })
+        .lean();
+      res.json(populated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+);
+
+// @route   PUT /api/admin/invoices/:id/reject-proof
+// @desc    Reject payment proof and request resubmission (status back to approved)
+// @access  Private (Admin)
+router.put(
+  '/invoices/:id/reject-proof',
+  [body('reason').trim().notEmpty().withMessage('Rejection reason is required')],
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+      const invoice = await Invoice.findById(req.params.id);
+      if (!invoice) return res.status(404).json({ message: 'Invoice not found' });
+      if (invoice.status !== 'pending_verification') {
+        return res.status(400).json({ message: 'Only invoices with submitted proof can be rejected' });
+      }
+      invoice.status = 'approved';
+      invoice.paymentProofRejectionReason = req.body.reason.trim();
+      invoice.paymentProofRejectedAt = new Date();
+      await invoice.save();
+      const populated = await Invoice.findById(invoice._id)
+        .populate('cafe', 'firstName lastName email shopName shopAddress')
+        .populate({ path: 'shift', populate: { path: 'acceptedBy', select: 'firstName lastName email' } })
+        .lean();
+      res.json(populated);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
