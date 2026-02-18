@@ -23,6 +23,13 @@ export async function seedPlatformConfig(): Promise<void> {
   if (existing?.basePriceTier3to12 == null) updates.basePriceTier3to12 = 17;
   if (existing?.basePriceTier12to24 == null) updates.basePriceTier12to24 = 16;
   if (existing?.basePriceTier24Plus == null) updates.basePriceTier24Plus = 14;
+  if (existing?.companyName == null || existing?.companyName === '') {
+    updates.companyName = 'Vework Ltd';
+    updates.companyNumber = '16994650';
+    updates.registeredAddress = '4 Third Avenue, London, E12 6DU';
+    updates.supportEmail = 'support@vework.co';
+    updates.supportPhone = '+447777182292';
+  }
   if (Object.keys(updates).length === 0) return;
 
   await PlatformConfig.findOneAndUpdate(

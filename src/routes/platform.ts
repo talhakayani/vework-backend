@@ -1,8 +1,26 @@
-import express, { Response } from 'express';
+import express, { Response, Request } from 'express';
 import PlatformConfig from '../models/PlatformConfig';
 import { protect, requireApproval, AuthRequest } from '../middleware/auth';
 
 const router = express.Router();
+
+// @route   GET /api/platform/company-details
+// @desc    Get company details for Terms, Privacy, and contact (public)
+// @access  Public
+router.get('/company-details', async (_req: Request, res: Response) => {
+  try {
+    const config = await PlatformConfig.findOne({ key: 'platform' }).lean();
+    res.json({
+      companyName: config?.companyName ?? 'Vework Ltd',
+      companyNumber: config?.companyNumber ?? '16994650',
+      registeredAddress: config?.registeredAddress ?? '4 Third Avenue, London, E12 6DU',
+      supportEmail: config?.supportEmail ?? 'support@vework.co',
+      supportPhone: config?.supportPhone ?? '+447777182292',
+    });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+});
 
 // @route   GET /api/platform/bank-details
 // @desc    Get platform bank details for payment (e.g. when creating shift)

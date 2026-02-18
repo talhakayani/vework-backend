@@ -27,6 +27,12 @@ export interface IPlatformConfig extends Document {
   basePriceTier12to24?: number;
   /** Base £/hr when posted 24+ hours before shift start (default 14) */
   basePriceTier24Plus?: number;
+  /** Company details for Terms, Privacy, and contact (public) */
+  companyName?: string;
+  companyNumber?: string;
+  registeredAddress?: string;
+  supportEmail?: string;
+  supportPhone?: string;
   updatedAt: Date;
 }
 
@@ -58,6 +64,11 @@ const PlatformConfigSchema = new Schema<IPlatformConfig>(
     basePriceTier3to12: { type: Number, default: 17, min: 0 },
     basePriceTier12to24: { type: Number, default: 16, min: 0 },
     basePriceTier24Plus: { type: Number, default: 14, min: 0 },
+    companyName: { type: String, default: '' },
+    companyNumber: { type: String, default: '' },
+    registeredAddress: { type: String, default: '' },
+    supportEmail: { type: String, default: '' },
+    supportPhone: { type: String, default: '' },
   },
   { timestamps: true }
 );

@@ -662,6 +662,11 @@ router.put(
     body('basePriceTier3to12').optional().isFloat({ min: 0 }),
     body('basePriceTier12to24').optional().isFloat({ min: 0 }),
     body('basePriceTier24Plus').optional().isFloat({ min: 0 }),
+    body('companyName').optional().isString().trim(),
+    body('companyNumber').optional().isString().trim(),
+    body('registeredAddress').optional().isString().trim(),
+    body('supportEmail').optional().isString().trim(),
+    body('supportPhone').optional().isString().trim(),
   ],
   async (req: AuthRequest, res: Response) => {
     try {
@@ -690,21 +695,31 @@ router.put(
       if (req.body.basePriceTier24Plus !== undefined) {
         updateData.basePriceTier24Plus = parseFloat(req.body.basePriceTier24Plus);
       }
+      if (req.body.companyName !== undefined) updateData.companyName = String(req.body.companyName).trim();
+      if (req.body.companyNumber !== undefined) updateData.companyNumber = String(req.body.companyNumber).trim();
+      if (req.body.registeredAddress !== undefined) updateData.registeredAddress = String(req.body.registeredAddress).trim();
+      if (req.body.supportEmail !== undefined) updateData.supportEmail = String(req.body.supportEmail).trim();
+      if (req.body.supportPhone !== undefined) updateData.supportPhone = String(req.body.supportPhone).trim();
 
       const config = await PlatformConfig.findOneAndUpdate(
         { key: 'platform' },
         { $set: updateData },
         { new: true, upsert: true }
-      );
+      ).lean();
 
       res.json({
-        employeePriceDeductionPercentage: config.employeePriceDeductionPercentage ?? 0,
-        platformFeePerShift: config.platformFeePerShift ?? 10,
-        freeShiftsPerCafe: config.freeShiftsPerCafe ?? 2,
-        minimumHoursBeforeShift: config.minimumHoursBeforeShift ?? 3,
-        basePriceTier3to12: config.basePriceTier3to12 ?? 17,
-        basePriceTier12to24: config.basePriceTier12to24 ?? 16,
-        basePriceTier24Plus: config.basePriceTier24Plus ?? 14,
+        employeePriceDeductionPercentage: config?.employeePriceDeductionPercentage ?? 0,
+        platformFeePerShift: config?.platformFeePerShift ?? 10,
+        freeShiftsPerCafe: config?.freeShiftsPerCafe ?? 2,
+        minimumHoursBeforeShift: config?.minimumHoursBeforeShift ?? 3,
+        basePriceTier3to12: config?.basePriceTier3to12 ?? 17,
+        basePriceTier12to24: config?.basePriceTier12to24 ?? 16,
+        basePriceTier24Plus: config?.basePriceTier24Plus ?? 14,
+        companyName: config?.companyName ?? '',
+        companyNumber: config?.companyNumber ?? '',
+        registeredAddress: config?.registeredAddress ?? '',
+        supportEmail: config?.supportEmail ?? '',
+        supportPhone: config?.supportPhone ?? '',
       });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -726,6 +741,11 @@ router.get('/platform-config', async (req: AuthRequest, res: Response) => {
       basePriceTier3to12: config?.basePriceTier3to12 ?? 17,
       basePriceTier12to24: config?.basePriceTier12to24 ?? 16,
       basePriceTier24Plus: config?.basePriceTier24Plus ?? 14,
+      companyName: config?.companyName ?? '',
+      companyNumber: config?.companyNumber ?? '',
+      registeredAddress: config?.registeredAddress ?? '',
+      supportEmail: config?.supportEmail ?? '',
+      supportPhone: config?.supportPhone ?? '',
     });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
