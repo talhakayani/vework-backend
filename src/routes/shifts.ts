@@ -60,6 +60,14 @@ router.post(
 
       const { date, startTime, endTime, requiredEmployees, description, hourlyRate: clientHourlyRate, location } = req.body;
 
+      // Minimum shift duration: 6 hours
+      const shiftHours = getHoursFromShift(startTime, endTime);
+      if (shiftHours < 6) {
+        return res.status(400).json({
+          message: 'Shift duration must be at least 6 hours.',
+        });
+      }
+
       // Platform config: min hours before shift + tiered base prices
       const config = await PlatformConfig.findOne({ key: 'platform' }).lean();
       const minimumHoursBeforeShift = config?.minimumHoursBeforeShift ?? 3;
@@ -352,6 +360,11 @@ router.put(
       const startTime = updates.startTime || shift.startTime;
       const endTime = updates.endTime || shift.endTime;
       const requiredEmployees = updates.requiredEmployees ?? shift.requiredEmployees;
+
+      const shiftHours = getHoursFromShift(startTime, endTime);
+      if (shiftHours < 6) {
+        return res.status(400).json({ message: 'Shift duration must be at least 6 hours.' });
+      }
 
       if (requiredEmployees < (shift.acceptedBy?.length || 0)) {
         return res.status(400).json({ message: 'Cannot reduce required employees below current accepted count' });
