@@ -56,6 +56,12 @@ export interface IUser extends Document {
     dateOfBirth?: Date;
     cvPath?: string;
     shareCode?: string;
+    /** Employee address (required at registration) */
+    address?: string;
+    /** UK National Insurance number (required at registration) */
+    nationalInsuranceNumber?: string;
+    /** Proof of address document path (required at registration) */
+    proofOfAddressPath?: string;
     rating?: number;
     totalReviews?: number;
     // Café specific fields
@@ -119,6 +125,9 @@ const UserSchema = new Schema<IUser>(
         dateOfBirth: Date,
         cvPath: String,
         shareCode: String,
+        address: String,
+        nationalInsuranceNumber: String,
+        proofOfAddressPath: String,
         rating: {
             type: Number,
             default: 0,

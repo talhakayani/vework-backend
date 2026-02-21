@@ -34,3 +34,13 @@ export const upload = multer({
     fileSize: 5 * 1024 * 1024, // 5MB
   },
 });
+
+/** For employee registration: CV + proof of address */
+export const uploadEmployeeRegistration = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 },
+}).fields([
+  { name: 'cv', maxCount: 1 },
+  { name: 'proofOfAddress', maxCount: 1 },
+]);

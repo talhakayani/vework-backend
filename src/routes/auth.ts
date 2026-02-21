@@ -3,8 +3,9 @@ import { body, validationResult } from 'express-validator';
 import User from '../models/User';
 import { generateToken } from '../utils/generateToken';
 import { protect, AuthRequest } from '../middleware/auth';
-import { upload } from '../utils/upload';
+import { upload, uploadEmployeeRegistration } from '../utils/upload';
 import { maskPaymentDetails } from '../utils/maskPaymentDetails';
+import SignupDraft from '../models/SignupDraft';
 import {
   generateVerificationToken,
   generateResetToken,
@@ -17,12 +18,61 @@ const router = express.Router();
 
 const RESEND_COOLDOWN_SEC = 30;
 
+// @route   GET /api/auth/signup-draft
+// @desc    Get signup draft by draftId or email (for resuming)
+// @access  Public
+router.get('/signup-draft', async (req: Request, res: Response) => {
+  try {
+    const { draftId, email } = req.query;
+    if (!draftId && !email) {
+      return res.status(400).json({ message: 'draftId or email required' });
+    }
+    const query = draftId ? { draftId } : { email: (email as string).toLowerCase().trim() };
+    const draft = await SignupDraft.findOne(query).lean();
+    if (!draft) return res.json(null);
+    res.json({ draftId: draft.draftId, userType: draft.userType, step: draft.step, data: draft.data });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @route   PUT /api/auth/signup-draft
+// @desc    Save signup draft (persist stepper state)
+// @access  Public
+router.put(
+  '/signup-draft',
+  [
+    body('draftId').trim().notEmpty(),
+    body('userType').isIn(['employee', 'cafe']),
+    body('step').isInt({ min: 1, max: 4 }),
+    body('data').optional().isObject(),
+  ],
+  async (req: Request, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+      const { draftId, userType, step, data } = req.body;
+      const email = data?.email ? String(data.email).toLowerCase().trim() : undefined;
+      const draft = await SignupDraft.findOneAndUpdate(
+        { draftId },
+        { draftId, email, userType, step, data: data || {} },
+        { upsert: true, new: true }
+      );
+      res.json({ draftId: draft.draftId, userType: draft.userType, step: draft.step, data: draft.data });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+);
+
 // @route   POST /api/auth/register/employee
-// @desc    Register employee
+// @desc    Register employee (address, NI number, proof of address required)
 // @access  Public
 router.post(
   '/register/employee',
-  upload.single('cv'),
+  uploadEmployeeRegistration,
   [
     body('email').isEmail().normalizeEmail(),
     body('password').isLength({ min: 6 }),
@@ -30,6 +80,8 @@ router.post(
     body('lastName').trim().notEmpty(),
     body('dateOfBirth').isISO8601(),
     body('shareCode').trim().notEmpty(),
+    body('address').trim().notEmpty(),
+    body('nationalInsuranceNumber').trim().notEmpty(),
   ],
   async (req: Request, res: Response) => {
     try {
@@ -38,14 +90,34 @@ router.post(
         return res.status(400).json({ errors: errors.array() });
       }
 
-      const { email, password, firstName, lastName, dateOfBirth, shareCode } = req.body;
+      const files = req.files as { cv?: Express.Multer.File[]; proofOfAddress?: Express.Multer.File[] } | undefined;
+      const cvFile = files?.cv?.[0];
+      const proofOfAddressFile = files?.proofOfAddress?.[0];
+      if (!cvFile) {
+        return res.status(400).json({ message: 'CV is required' });
+      }
+      if (!proofOfAddressFile) {
+        return res.status(400).json({ message: 'Proof of address document is required' });
+      }
+
+      const {
+        email,
+        password,
+        firstName,
+        lastName,
+        dateOfBirth,
+        shareCode,
+        address,
+        nationalInsuranceNumber,
+      } = req.body;
 
       const userExists = await User.findOne({ email });
       if (userExists) {
         return res.status(400).json({ message: 'User already exists' });
       }
 
-      const cvPath = req.file ? `uploads/${req.file.filename}` : undefined;
+      const cvPath = `uploads/${cvFile.filename}`;
+      const proofOfAddressPath = `uploads/${proofOfAddressFile.filename}`;
       const verificationToken = generateVerificationToken();
 
       const user = await User.create({
@@ -55,6 +127,9 @@ router.post(
         lastName,
         dateOfBirth,
         shareCode,
+        address,
+        nationalInsuranceNumber,
+        proofOfAddressPath,
         role: 'employee',
         approvalStatus: 'pending',
         cvPath,
