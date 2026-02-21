@@ -1,6 +1,9 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import path from 'path';
 import { connectDB } from './config/database';
 import authRoutes from './routes/auth';
 import shiftRoutes from './routes/shifts';
@@ -11,9 +14,6 @@ import employeeRoutes from './routes/employee';
 import applicationRoutes from './routes/applications';
 import profileRoutes from './routes/profile';
 import platformRoutes from './routes/platform';
-import path from 'path';
-
-dotenv.config();
 
 const app = express();
 

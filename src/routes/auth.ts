@@ -5,9 +5,17 @@ import { generateToken } from '../utils/generateToken';
 import { protect, AuthRequest } from '../middleware/auth';
 import { upload } from '../utils/upload';
 import { maskPaymentDetails } from '../utils/maskPaymentDetails';
-import { generateVerificationToken, sendVerificationEmail } from '../utils/sendVerificationEmail';
+import {
+  generateVerificationToken,
+  generateResetToken,
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+} from '../email';
+import { checkRateLimit } from '../utils/rateLimit';
 
 const router = express.Router();
+
+const RESEND_COOLDOWN_SEC = 30;
 
 // @route   POST /api/auth/register/employee
 // @desc    Register employee
@@ -55,7 +63,7 @@ router.post(
         emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
       });
 
-      sendVerificationEmail(email, verificationToken, firstName).catch((err) =>
+      sendVerificationEmail({ email, token: verificationToken, firstName }).catch((err) =>
         console.error('Failed to send verification email:', err)
       );
 
@@ -117,7 +125,7 @@ router.post(
         emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
       });
 
-      sendVerificationEmail(email, verificationToken, firstName).catch((err) =>
+      sendVerificationEmail({ email, token: verificationToken, firstName }).catch((err) =>
         console.error('Failed to send verification email:', err)
       );
 
@@ -131,6 +139,131 @@ router.post(
         approvalStatus: user.approvalStatus,
         token: generateToken(user._id.toString()),
       });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+);
+
+// @route   POST /api/auth/resend-verification
+// @desc    Resend verification email (max 3 per day per email, 30s cooldown between sends)
+// @access  Public
+router.post(
+  '/resend-verification',
+  [body('email').isEmail().normalizeEmail()],
+  async (req: Request, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+      const { email } = req.body;
+      const key = `verification:${email}`;
+      const { allowed, retriesLeft } = await checkRateLimit(key);
+      if (!allowed) {
+        return res.status(429).json({
+          message: "You've used all 3 verification attempts for today. Try again tomorrow.",
+          retriesLeft: 0,
+        });
+      }
+      const user = await User.findOne({ email });
+      if (!user) {
+        return res.json({ message: 'If an account exists with this email, you will receive a verification link.' });
+      }
+      if ((user as any).emailVerified) {
+        return res.status(400).json({ message: 'Email is already verified. You can log in.' });
+      }
+      const token = generateVerificationToken();
+      (user as any).emailVerificationToken = token;
+      (user as any).emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      await user.save();
+      sendVerificationEmail({ email: user.email, token, firstName: user.firstName }).catch((err) =>
+        console.error('Failed to send verification email:', err)
+      );
+      const nextResendAllowedAt = Date.now() + RESEND_COOLDOWN_SEC * 1000;
+      res.json({
+        message: 'Verification email sent. Check your inbox.',
+        nextResendAllowedAt,
+        retriesLeft,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+);
+
+// @route   POST /api/auth/forgot-password
+// @desc    Request password reset; sends email with reset link (max 3 per day per email)
+// @access  Public
+router.post(
+  '/forgot-password',
+  [body('email').isEmail().normalizeEmail()],
+  async (req: Request, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+      const { email } = req.body;
+      const key = `password_reset:${email}`;
+      const { allowed, retriesLeft } = await checkRateLimit(key);
+      if (!allowed) {
+        return res.status(429).json({
+          message: "You've used all 3 password reset attempts for today. Try again tomorrow.",
+          retriesLeft: 0,
+        });
+      }
+      const user = await User.findOne({ email });
+      if (!user) {
+        return res.json({ message: 'If an account exists with this email, you will receive a password reset link.' });
+      }
+      const token = generateResetToken();
+      (user as any).resetPasswordToken = token;
+      (user as any).resetPasswordExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+      await user.save();
+      sendPasswordResetEmail({
+        email: user.email,
+        token,
+        firstName: user.firstName,
+      }).catch((err) => console.error('Failed to send password reset email:', err));
+      res.json({
+        message: 'If an account exists with this email, you will receive a password reset link.',
+        retriesLeft,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  }
+);
+
+// @route   POST /api/auth/reset-password
+// @desc    Reset password with token from email
+// @access  Public
+router.post(
+  '/reset-password',
+  [
+    body('token').trim().notEmpty(),
+    body('password').isLength({ min: 6 }),
+  ],
+  async (req: Request, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+      const { token, password } = req.body;
+      const user = await User.findOne({
+        resetPasswordToken: token,
+        resetPasswordExpires: { $gt: new Date() },
+      });
+      if (!user) {
+        return res.status(400).json({ message: 'Invalid or expired reset link. Please request a new one.' });
+      }
+      (user as any).password = password;
+      (user as any).resetPasswordToken = undefined;
+      (user as any).resetPasswordExpires = undefined;
+      await user.save();
+      res.json({ message: 'Password reset successfully. You can now log in.' });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -158,13 +291,11 @@ router.post(
       }
 
       const emailVerified = (user as any).emailVerified !== false; // Existing users without field = verified
-      if (
-        (user.role === 'employee' || user.role === 'cafe') &&
-        process.env.VERIFY_EMAIL_REQUIRED === 'true' &&
-        !emailVerified
-      ) {
+      if ((user.role === 'employee' || user.role === 'cafe') && !emailVerified) {
         return res.status(403).json({
           message: 'Please verify your email before logging in. Check your inbox for the verification link.',
+          code: 'EMAIL_NOT_VERIFIED',
+          email: user.email,
         });
       }
 

@@ -48,6 +48,8 @@ export interface IUser extends Document {
     emailVerified?: boolean;
     emailVerificationToken?: string;
     emailVerificationExpires?: Date;
+    resetPasswordToken?: string;
+    resetPasswordExpires?: Date;
     isBlocked?: boolean; // Admin can temporarily block employee accounts
     blockedUntil?: Date; // Optional: block until this date (null = indefinite until unblocked)
     // Employee specific fields
@@ -109,6 +111,8 @@ const UserSchema = new Schema<IUser>(
         emailVerified: { type: Boolean, default: false },
         emailVerificationToken: String,
         emailVerificationExpires: Date,
+        resetPasswordToken: String,
+        resetPasswordExpires: Date,
         isBlocked: { type: Boolean, default: false },
         blockedUntil: Date,
         // Employee fields
