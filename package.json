@@ -10,8 +10,7 @@
     "test": "jest",
     "create-admin": "tsx src/scripts/createAdmin.ts",
     "seed:platform": "tsx src/scripts/runSeedPlatform.ts",
-    "test:smtp": "tsx src/scripts/testSmtp.ts",
-    "diagnose:smtp": "tsx src/scripts/diagnoseSmtp.ts"
+    "test:brevo": "tsx src/scripts/testBrevo.ts"
   },
   "keywords": [
     "shift",
@@ -22,6 +21,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@getbrevo/brevo": "^5.0.4",
     "@types/pdfkit": "^0.17.4",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
@@ -32,7 +32,6 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.0.3",
     "multer": "^1.4.5-lts.1",
-    "nodemailer": "^6.9.7",
     "pdfkit": "^0.17.2"
   },
   "devDependencies": {
@@ -42,7 +41,6 @@
     "@types/jsonwebtoken": "^9.0.5",
     "@types/multer": "^1.4.11",
     "@types/node": "^20.10.5",
-    "@types/nodemailer": "^6.4.14",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3"
   }

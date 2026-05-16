@@ -3,7 +3,12 @@ import path from 'path';
 
 dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') });
 
-const fromRaw = process.env.SMTP_FROM || process.env.SENDGRID_FROM || 'Vework <noreply@example.com>';
+const appName = process.env.APP_NAME || 'Vework';
+const brevoSender = process.env.BREVO_SENDER?.trim();
+const fromRaw =
+  (brevoSender ? `${appName} <${brevoSender}>` : null) ||
+  process.env.BREVO_FROM ||
+  `${appName} <noreply@example.com>`;
 const fromMatch = fromRaw.trim().match(/^(.+?)\s*<([^>]+)>$/);
 const fromEmail = fromMatch ? fromMatch[2].trim().toLowerCase() : fromRaw.trim().toLowerCase();
 const fromName = fromMatch ? fromMatch[1].trim() : 'Vework';
