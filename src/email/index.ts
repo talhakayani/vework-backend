@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { emailConfig } from './config';
-import { sendEmail, isSendGridConfigured } from './sendgrid';
+import { sendEmail, isSmtpConfigured } from './smtp';
 import { getVerifyEmailSubject, getVerifyEmailHtml } from './templates/verifyEmail';
 import { getResetPasswordSubject, getResetPasswordHtml } from './templates/resetPassword';
 
@@ -20,14 +20,14 @@ export interface SendVerificationEmailParams {
 }
 
 /**
- * Send email verification. Uses SendGrid if SENDGRID_API_KEY is set;
+ * Send email verification via SMTP when configured;
  * otherwise logs the link in development and does not send.
  */
 export async function sendVerificationEmail(params: SendVerificationEmailParams): Promise<void> {
   const { email, token, firstName } = params;
   const verifyUrl = `${emailConfig.frontendUrl}/verify-email?token=${token}`;
 
-  if (!isSendGridConfigured()) {
+  if (!isSmtpConfigured()) {
     console.log(`[DEV] Verification link for ${email}: ${verifyUrl}`);
     return;
   }
@@ -49,13 +49,13 @@ export interface SendPasswordResetEmailParams {
 }
 
 /**
- * Send password reset email. Uses SendGrid if configured; otherwise logs the link in development.
+ * Send password reset email via SMTP when configured; otherwise logs the link in development.
  */
 export async function sendPasswordResetEmail(params: SendPasswordResetEmailParams): Promise<void> {
   const { email, token, firstName } = params;
   const resetUrl = `${emailConfig.frontendUrl}/reset-password?token=${token}`;
 
-  if (!isSendGridConfigured()) {
+  if (!isSmtpConfigured()) {
     console.log(`[DEV] Password reset link for ${email}: ${resetUrl}`);
     return;
   }
