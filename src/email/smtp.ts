@@ -1,3 +1,4 @@
+import dns from 'dns/promises';
 import nodemailer from 'nodemailer';
 import type SMTPTransport from 'nodemailer/lib/smtp-transport';
 import type { Transporter } from 'nodemailer';
@@ -27,15 +28,29 @@ export function isSmtpConfigured(): boolean {
   return !!(host?.trim() && user?.trim() && pass?.trim());
 }
 
-function buildTransportOptions(): SMTPTransport.Options {
+/** Resolve IPv4 hostname — avoids broken IPv6 routes on some VPS. */
+async function resolveSmtpHost(hostname: string): Promise<string> {
+  const override = process.env.SMTP_HOST_IP?.trim();
+  if (override) {
+    return override;
+  }
+  if (!useIpv4()) {
+    return hostname;
+  }
+  const { address } = await dns.lookup(hostname, { family: 4 });
+  return address;
+}
+
+async function buildTransportOptions(): Promise<SMTPTransport.Options> {
   const { host, port, user, pass } = getSmtpEnv();
   const hostTrimmed = host!.trim();
+  const connectHost = await resolveSmtpHost(hostTrimmed);
   const timeout = getTimeoutMs();
   const secure =
     process.env.SMTP_SECURE === 'true' || (process.env.SMTP_SECURE !== 'false' && port === 465);
 
   const options: SMTPTransport.Options = {
-    host: hostTrimmed,
+    host: connectHost,
     port,
     secure,
     auth: {
@@ -68,15 +83,22 @@ function buildTransportOptions(): SMTPTransport.Options {
 }
 
 let transporter: Transporter | null = null;
+let transporterInit: Promise<Transporter> | null = null;
 
-function getTransporter(): Transporter | null {
+async function getTransporter(): Promise<Transporter | null> {
   if (!isSmtpConfigured()) {
     return null;
   }
-  if (!transporter) {
-    transporter = nodemailer.createTransport(buildTransportOptions());
+  if (transporter) {
+    return transporter;
   }
-  return transporter;
+  if (!transporterInit) {
+    transporterInit = buildTransportOptions().then((options) => {
+      transporter = nodemailer.createTransport(options);
+      return transporter;
+    });
+  }
+  return transporterInit;
 }
 
 export interface SendEmailOptions {
@@ -96,7 +118,8 @@ function logConnectionTroubleshooting(err: unknown): void {
     '[SMTP] Cannot reach mail server. Common on deployed VPS/cloud: outbound SMTP (587/465) is blocked.',
   );
   console.error(`[SMTP] Tried ${host}:${port}. On the server run: nc -zv ${host} ${port}`);
-  console.error('[SMTP] Fixes: try SMTP_PORT=465 and SMTP_SECURE=true; set SMTP_FORCE_IPV4=true; ask host to unblock SMTP; or use an HTTPS email API (Brevo/Resend).');
+  console.error('[SMTP] Run on this server: npm run diagnose:smtp');
+  console.error('[SMTP] Fix: allow outbound TCP 587/465 in VPS firewall + cloud security group, or ask provider to unblock SMTP.');
 }
 
 /**
@@ -106,7 +129,8 @@ export async function verifySmtpConnection(): Promise<void> {
   if (!isSmtpConfigured()) {
     throw new Error('SMTP not configured (SMTP_HOST, SMTP_USER, SMTP_PASS required)');
   }
-  const transport = nodemailer.createTransport(buildTransportOptions());
+  const options = await buildTransportOptions();
+  const transport = nodemailer.createTransport(options);
   await transport.verify();
 }
 
@@ -115,7 +139,7 @@ export async function verifySmtpConnection(): Promise<void> {
  * Throws on transport errors.
  */
 export async function sendEmail(options: SendEmailOptions): Promise<boolean> {
-  const transport = getTransporter();
+  const transport = await getTransporter();
   if (!transport) {
     return false;
   }
