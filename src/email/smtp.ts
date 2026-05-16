@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
-import type { Transporter, TransportOptions } from 'nodemailer';
+import type SMTPTransport from 'nodemailer/lib/smtp-transport';
+import type { Transporter } from 'nodemailer';
 import { emailConfig } from './config';
 
 function getSmtpEnv() {
@@ -26,14 +27,14 @@ export function isSmtpConfigured(): boolean {
   return !!(host?.trim() && user?.trim() && pass?.trim());
 }
 
-function buildTransportOptions(): TransportOptions {
+function buildTransportOptions(): SMTPTransport.Options {
   const { host, port, user, pass } = getSmtpEnv();
   const hostTrimmed = host!.trim();
   const timeout = getTimeoutMs();
   const secure =
     process.env.SMTP_SECURE === 'true' || (process.env.SMTP_SECURE !== 'false' && port === 465);
 
-  const options: TransportOptions = {
+  const options: SMTPTransport.Options = {
     host: hostTrimmed,
     port,
     secure,
@@ -55,7 +56,7 @@ function buildTransportOptions(): TransportOptions {
   }
 
   if (useIpv4()) {
-    (options as TransportOptions & { family?: number }).family = 4;
+    (options as SMTPTransport.Options & { family?: number }).family = 4;
   }
 
   if (process.env.SMTP_DEBUG === 'true') {
