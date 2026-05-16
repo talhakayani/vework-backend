@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "test": "jest",
     "create-admin": "tsx src/scripts/createAdmin.ts",
-    "seed:platform": "tsx src/scripts/runSeedPlatform.ts"
+    "seed:platform": "tsx src/scripts/runSeedPlatform.ts",
+    "test:smtp": "tsx src/scripts/testSmtp.ts"
   },
   "keywords": [
     "shift",
